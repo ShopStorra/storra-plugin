@@ -30,6 +30,16 @@ public final class Database implements AutoCloseable {
         this.connection = connection;
     }
 
+    /**
+     * Test-only factory. Wraps an existing JDBC connection; caller
+     * is responsible for the schema bootstrap (tests typically
+     * run a subset of the open() DDL against a temp file). Not
+     * called from production paths.
+     */
+    public static Database fromConnectionForTests(Connection connection) {
+        return new Database(connection);
+    }
+
     public static Database open(JavaPlugin plugin, Path dbPath) throws SQLException {
         try {
             Files.createDirectories(dbPath.getParent());
