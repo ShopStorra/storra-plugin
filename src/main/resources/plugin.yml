@@ -1,0 +1,24 @@
+name: StorraPlugin
+version: ${project.version}
+main: xyz.storra.plugin.StorraPlugin
+api-version: '1.21'
+authors: [Storra]
+description: |
+  Storra Minecraft commerce delivery plugin. Pairs to a Storra
+  tenant + executes in-game delivery commands when customers buy.
+website: https://storra.xyz
+
+commands:
+  storra:
+    description: Storra plugin admin commands.
+    permission: storra.admin
+    usage: |
+      /storra pair <code>   — pair to your Storra tenant (one-time bootstrap)
+      /storra status        — show pairing + heartbeat state
+      /storra history       — last N delivered orders
+      /storra reload        — reload config.yml
+
+permissions:
+  storra.admin:
+    description: Operator-level access to Storra admin commands.
+    default: op

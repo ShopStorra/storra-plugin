@@ -1,0 +1,36 @@
+# Storra plugin configuration.
+#
+# After installing the plugin, run `/storra pair <code>` from the
+# server console to populate the api section automatically. If your
+# host doesn't allow interactive commands, paste the (server_id,
+# secret) pair from the Storra dashboard's pairing modal directly
+# into the api block below and restart.
+
+api:
+  # Public Storra API root. The default is correct for production
+  # tenants. Override only if you're running against a private
+  # deployment.
+  base-url: "https://storra.xyz"
+
+  # Filled in by `/storra pair <code>` (or paste manually if
+  # scripted). Both values come from the dashboard's one-time
+  # reveal modal.
+  server-id: ""
+  secret: ""
+
+# Polling cadence. Defaults are tuned for typical merchant load
+# (sub-second latency on player join, modest server-side request
+# volume). Lower poll-interval for faster delivery; higher for
+# quieter servers.
+polling:
+  poll-interval-seconds: 30
+  heartbeat-interval-seconds: 60
+  command-execute-parallelism: 4
+
+# Local persistence (offline queue + delivery history).
+persistence:
+  database-file: "storra.db"
+  history-retention: 100
+
+debug:
+  enabled: false

@@ -1,0 +1,23 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.fleet/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*.log
+hs_err_pid*
+
+# Local plugin run dir (if a developer points a Paper server at this repo)
+run/
