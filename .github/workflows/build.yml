@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [main]
 
+# softprops/action-gh-release needs write access to create the
+# Release on tag push. Workflow-level GITHUB_TOKEN defaults to
+# read-only since it's not org policy here.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
