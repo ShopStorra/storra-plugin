@@ -1,8 +1,17 @@
 package xyz.storra.plugin;
 
 import org.bukkit.plugin.java.JavaPlugin;
+import xyz.storra.plugin.api.HmacSigner;
+import xyz.storra.plugin.api.StorraApiClient;
 import xyz.storra.plugin.command.StorraCommand;
 import xyz.storra.plugin.config.PluginConfig;
+import xyz.storra.plugin.delivery.DeliveryHistory;
+import xyz.storra.plugin.delivery.DeliveryManager;
+import xyz.storra.plugin.delivery.OfflineQueue;
+import xyz.storra.plugin.listener.PlayerJoinListener;
+import xyz.storra.plugin.service.HeartbeatService;
+import xyz.storra.plugin.service.PollService;
+import xyz.storra.plugin.service.RecoveryService;
 import xyz.storra.plugin.storage.Database;
 
 /**
@@ -12,21 +21,25 @@ import xyz.storra.plugin.storage.Database;
  *   1. Config load (defaults written to plugin data folder on first run).
  *   2. Database init (creates SQLite tables for offline queue + history).
  *   3. /storra command registration.
- *   4. Service start (poll, heartbeat, recovery, player-join listener) —
- *      iff the plugin is paired (api.server-id + api.secret are non-empty).
- *      Unpaired servers wait for the merchant to run /storra pair.
+ *   4. If paired, start services: PollService, HeartbeatService,
+ *      RecoveryService (one-shot), PlayerJoinListener. Unpaired
+ *      servers register the command but do nothing else; merchant
+ *      runs /storra pair, which calls startServices() after the
+ *      config rewrite.
  *
- * onDisable cancels every scheduled task and closes the SQLite
- * connection so a /reload or stop leaves no leaked resources.
- *
- * Service wiring lands in ticket 7. This file ships the lifecycle
- * scaffold + command registration so `/storra status` reports the
- * pairing state from day one.
+ * onDisable stops every service + closes SQLite so a /reload or
+ * stop leaves no leaked resources.
  */
 public final class StorraPlugin extends JavaPlugin {
 
     private PluginConfig config;
     private Database database;
+
+    private PollService pollService;
+    private HeartbeatService heartbeatService;
+    private OfflineQueue offlineQueue;
+    private DeliveryHistory history;
+    private DeliveryManager deliveryManager;
 
     @Override
     public void onEnable() {
@@ -43,6 +56,9 @@ public final class StorraPlugin extends JavaPlugin {
             return;
         }
 
+        offlineQueue = new OfflineQueue(database);
+        history = new DeliveryHistory(database, config.historyRetention());
+
         StorraCommand command = new StorraCommand(this);
         if (getCommand("storra") != null) {
             getCommand("storra").setExecutor(command);
@@ -57,13 +73,12 @@ public final class StorraPlugin extends JavaPlugin {
             return;
         }
 
-        getLogger().info("Storra plugin paired. Services start in ticket 7.");
-        // Services (PollService, HeartbeatService, RecoveryService,
-        // PlayerJoinListener) wired in ticket 7.
+        startServices();
     }
 
     @Override
     public void onDisable() {
+        stopServices();
         if (database != null) {
             try {
                 database.close();
@@ -81,13 +96,79 @@ public final class StorraPlugin extends JavaPlugin {
         return database;
     }
 
+    public OfflineQueue getOfflineQueue() {
+        return offlineQueue;
+    }
+
+    public DeliveryHistory getDeliveryHistory() {
+        return history;
+    }
+
     /**
      * Reload from disk. Called by /storra reload after a merchant
-     * edits config.yml on a running server (or after /storra pair
-     * writes the pairing values).
+     * edits config.yml on a running server, AND by /storra pair
+     * after writing the pairing values. Bounces services if the
+     * pairing state changed.
      */
     public void reloadPluginConfig() {
+        boolean wasPaired = config != null && config.isPaired();
         reloadConfig();
         config = PluginConfig.load(this);
+        boolean nowPaired = config.isPaired();
+
+        if (!wasPaired && nowPaired) {
+            startServices();
+        } else if (wasPaired && !nowPaired) {
+            stopServices();
+        } else if (wasPaired) {
+            // Pairing unchanged but other config might have. Bounce
+            // services so new poll / heartbeat intervals take effect.
+            stopServices();
+            startServices();
+        }
+    }
+
+    /** Boot poll + heartbeat + recovery + player-join listener. */
+    public void startServices() {
+        if (!config.isPaired()) return;
+
+        HmacSigner signer = new HmacSigner(config.serverId(), config.secret());
+        StorraApiClient api = new StorraApiClient(
+            config.baseUrl(),
+            signer,
+            getLogger()
+        );
+
+        deliveryManager = new DeliveryManager(this, api, offlineQueue, history);
+
+        pollService = new PollService(this, api, deliveryManager, config.pollInterval());
+        heartbeatService = new HeartbeatService(this, api, config.heartbeatInterval());
+
+        pollService.start();
+        heartbeatService.start();
+        new RecoveryService(this, api, deliveryManager).runOnce();
+        getServer().getPluginManager().registerEvents(
+            new PlayerJoinListener(this, deliveryManager),
+            this
+        );
+
+        getLogger().info(
+            "Storra plugin services online (server-id=" + config.serverId() + ")."
+        );
+    }
+
+    /** Cancel scheduled services. Listener is unregistered via
+     *  HandlerList on plugin disable; an explicit re-register on
+     *  startServices is sufficient for the reload path. */
+    public void stopServices() {
+        if (pollService != null) {
+            pollService.stop();
+            pollService = null;
+        }
+        if (heartbeatService != null) {
+            heartbeatService.stop();
+            heartbeatService = null;
+        }
+        org.bukkit.event.HandlerList.unregisterAll(this);
     }
 }

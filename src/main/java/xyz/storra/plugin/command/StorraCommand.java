@@ -54,8 +54,7 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
             case "status":
                 return handleStatus(sender);
             case "history":
-                sender.sendMessage("[Storra] history will land in ticket 7.");
-                return true;
+                return handleHistory(sender);
             case "reload":
                 plugin.reloadPluginConfig();
                 sender.sendMessage("[Storra] config reloaded.");
@@ -112,7 +111,7 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                     plugin.reloadPluginConfig();
                     sender.sendMessage(
                         "[Storra] paired with server-id=" + result.serverId() + ". " +
-                        "Services start when ticket 7 wires PollService."
+                        "Services online — polling Storra for deliveries."
                     );
                 });
             } catch (Exception ex) {
@@ -133,9 +132,40 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         sender.sendMessage("[Storra] paired with server-id=" + cfg.serverId());
-        sender.sendMessage("[Storra] poll-interval=" + cfg.pollInterval().getSeconds() + "s, "
-            + "heartbeat-interval=" + cfg.heartbeatInterval().getSeconds() + "s");
-        sender.sendMessage("[Storra] services are not running yet (ticket 7).");
+        sender.sendMessage(
+            "[Storra] poll=" + cfg.pollInterval().getSeconds() + "s, " +
+            "heartbeat=" + cfg.heartbeatInterval().getSeconds() + "s"
+        );
+        try {
+            int depth = plugin.getOfflineQueue().depth();
+            sender.sendMessage("[Storra] offline queue depth: " + depth);
+        } catch (Exception ex) {
+            sender.sendMessage("[Storra] offline queue: ?? (" + ex.getMessage() + ")");
+        }
+        return true;
+    }
+
+    private boolean handleHistory(CommandSender sender) {
+        try {
+            var rows = plugin.getDeliveryHistory().recent(25);
+            if (rows.isEmpty()) {
+                sender.sendMessage("[Storra] no deliveries recorded yet.");
+                return true;
+            }
+            sender.sendMessage("[Storra] last " + rows.size() + " deliveries:");
+            for (var r : rows) {
+                String marker = "delivered".equals(r.status()) ? "✔" : "✖";
+                String reason = r.reason() == null ? "" : " — " + r.reason();
+                sender.sendMessage(
+                    "  " + marker + " #" + r.taskId() +
+                    " " + (r.playerName() == null ? "?" : r.playerName()) +
+                    " · " + (r.command() == null ? "" : r.command()) +
+                    reason
+                );
+            }
+        } catch (Exception ex) {
+            sender.sendMessage("[Storra] history failed: " + ex.getMessage());
+        }
         return true;
     }
 
