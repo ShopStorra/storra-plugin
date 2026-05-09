@@ -9,7 +9,10 @@
 
 plugins {
     java
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    // gradleup is the maintained fork; johnrengelman 8.1.1 ships
+    // ASM 9.4 which doesn't read Java 21 bytecode (class file
+    // major version 65). 8.3+ pulls ASM 9.7+.
+    id("com.gradleup.shadow") version "8.3.5"
 }
 
 group = "xyz.storra"
