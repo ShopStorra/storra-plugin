@@ -6,6 +6,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.jetbrains.annotations.NotNull;
 import xyz.storra.plugin.StorraPlugin;
+import xyz.storra.plugin.api.StorraApiClient;
 import xyz.storra.plugin.config.PluginConfig;
 
 import java.util.Arrays;
@@ -71,11 +72,53 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         String code = args[1];
-        sender.sendMessage("[Storra] /pair logic lands in ticket 6 (StorraApiClient). Got code: "
-            + code.substring(0, Math.min(4, code.length())) + "…");
-        // Ticket 6: call StorraApiClient.pair(code), receive
-        // { server_id, secret }, PluginConfig.writePairing(...),
-        // plugin.reloadPluginConfig(), start services.
+        PluginConfig cfg = plugin.getPluginConfig();
+        if (cfg == null) {
+            sender.sendMessage("[Storra] plugin not initialized.");
+            return true;
+        }
+        if (cfg.isPaired()) {
+            sender.sendMessage(
+                "[Storra] already paired (server-id=" + cfg.serverId() + "). " +
+                "Generate a new code in the dashboard if you want to re-pair."
+            );
+            return true;
+        }
+        // Pairing call is network I/O — run async so we don't block
+        // the server's main thread (or the console thread, depending
+        // on caller). Reload + status messages get re-sent on the
+        // server's main thread once the response lands.
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            sender.sendMessage("[Storra] pairing…");
+            try {
+                StorraApiClient.PairResult result = StorraApiClient.pair(
+                    cfg.baseUrl(),
+                    code,
+                    plugin.getLogger()
+                );
+                if (result == null) {
+                    sender.sendMessage(
+                        "[Storra] pairing failed — code is invalid or expired. " +
+                        "Generate a fresh code in the dashboard."
+                    );
+                    return;
+                }
+                // Persist + reload back on the main thread (config
+                // I/O is allowed off-thread but reload triggers
+                // listener re-registration, which Bukkit prefers
+                // on main).
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    PluginConfig.writePairing(plugin, result.serverId(), result.secret());
+                    plugin.reloadPluginConfig();
+                    sender.sendMessage(
+                        "[Storra] paired with server-id=" + result.serverId() + ". " +
+                        "Services start when ticket 7 wires PollService."
+                    );
+                });
+            } catch (Exception ex) {
+                sender.sendMessage("[Storra] pairing error: " + ex.getMessage());
+            }
+        });
         return true;
     }
 
