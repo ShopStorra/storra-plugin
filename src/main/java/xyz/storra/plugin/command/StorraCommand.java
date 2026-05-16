@@ -69,6 +69,10 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 return handleSendLink(sender, args);
             case "lookup":
                 return handleLookup(sender, args);
+            case "ban":
+                return handleBan(sender, args);
+            case "unban":
+                return handleUnban(sender, args);
             case "help":
             case "?":
                 sendUsage(sender);
@@ -424,6 +428,77 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private boolean handleBan(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage("§7Usage: §f/storra ban <player> [reason]");
+            return true;
+        }
+        String username = args[1];
+        String reason = args.length > 2 ? joinArgs(args, 2) : null;
+        StorraApiClient api = plugin.getApi();
+        if (api == null) {
+            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            return true;
+        }
+        sender.sendMessage("§7[Storra] banning §f" + username + "§7…");
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                StorraApiClient.BanResult result = api.ban(username, reason);
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (!result.ok()) {
+                        sender.sendMessage("§c[Storra] ban failed: " + result.error());
+                        return;
+                    }
+                    String suffix = reason == null ? "" : " §7(" + reason + ")";
+                    sender.sendMessage("§a[Storra] §f" + result.username()
+                        + " §ais now banned from this store." + suffix);
+                });
+            } catch (Exception ex) {
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                    sender.sendMessage("§c[Storra] ban failed: " + ex.getMessage())
+                );
+            }
+        });
+        return true;
+    }
+
+    private boolean handleUnban(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage("§7Usage: §f/storra unban <player>");
+            return true;
+        }
+        String username = args[1];
+        StorraApiClient api = plugin.getApi();
+        if (api == null) {
+            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            return true;
+        }
+        sender.sendMessage("§7[Storra] unbanning §f" + username + "§7…");
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                StorraApiClient.UnbanResult result = api.unban(username);
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (!result.ok()) {
+                        sender.sendMessage("§c[Storra] unban failed: " + result.error());
+                        return;
+                    }
+                    if (result.wasBanned()) {
+                        sender.sendMessage("§a[Storra] §f" + result.username()
+                            + " §ais no longer banned.");
+                    } else {
+                        sender.sendMessage("§7[Storra] §f" + result.username()
+                            + " §7was not on the ban list.");
+                    }
+                });
+            } catch (Exception ex) {
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                    sender.sendMessage("§c[Storra] unban failed: " + ex.getMessage())
+                );
+            }
+        });
+        return true;
+    }
+
     private static String joinArgs(String[] args, int from) {
         StringBuilder sb = new StringBuilder();
         for (int i = from; i < args.length; i++) {
@@ -446,6 +521,10 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("§7   /storra sendlink §f<player> <pkg>§7  DM a payment link to a player");
         sender.sendMessage("§7   /storra lookup §f<player>§7          payment history for a player");
         sender.sendMessage("");
+        sender.sendMessage("§e Moderation");
+        sender.sendMessage("§7   /storra ban §f<player> [reason]§7    block a player from purchasing");
+        sender.sendMessage("§7   /storra unban §f<player>§7           lift a purchase ban");
+        sender.sendMessage("");
         sender.sendMessage("§e Operations");
         sender.sendMessage("§7   /storra forcecheck                   poll for pending deliveries now");
         sender.sendMessage("§7   /storra history                      last N deliveries on this server");
@@ -458,6 +537,7 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         "pair", "status", "history", "reload",
         "forcecheck", "debug",
         "checkout", "sendlink", "lookup",
+        "ban", "unban",
         "help"
     );
 
@@ -480,11 +560,14 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 .filter(s -> s.startsWith(partial))
                 .toList();
         }
-        // /storra sendlink <player> + /storra lookup <player> →
-        // suggest currently-online player names.
+        // /storra sendlink <player> + /storra lookup <player> +
+        // /storra ban <player> + /storra unban <player> → suggest
+        // currently-online player names.
         if (args.length == 2
             && (args[0].equalsIgnoreCase("sendlink")
-                || args[0].equalsIgnoreCase("lookup"))) {
+                || args[0].equalsIgnoreCase("lookup")
+                || args[0].equalsIgnoreCase("ban")
+                || args[0].equalsIgnoreCase("unban"))) {
             String partial = args[1].toLowerCase();
             return plugin.getServer().getOnlinePlayers().stream()
                 .map(org.bukkit.entity.Player::getName)

@@ -275,6 +275,80 @@ public final class StorraApiClient {
         }
     }
 
+    /** Result of /ban — drives `/storra ban`. */
+    public record BanResult(String username, String error) {
+        public boolean ok() { return error == null; }
+    }
+
+    /** Result of /unban — drives `/storra unban`. */
+    public record UnbanResult(String username, boolean wasBanned, String error) {
+        public boolean ok() { return error == null; }
+    }
+
+    private static final class BanRaw {
+        Boolean ok;
+        String username;
+        Boolean wasBanned;
+        String error;
+    }
+
+    /**
+     * POST /api/v1/plugin/ban — block a minecraft username from
+     * purchasing on this store. Idempotent: re-banning is a no-op.
+     * Drives `/storra ban <player> [reason]`.
+     */
+    public BanResult ban(String username, String reason) throws IOException, InterruptedException {
+        java.util.Map<String, String> payload = new java.util.LinkedHashMap<>();
+        payload.put("username", username);
+        if (reason != null && !reason.isEmpty()) {
+            payload.put("reason", reason);
+        }
+        String body = GSON.toJson(payload);
+        HttpResponse<String> res = signedSend("/api/v1/plugin/ban", "POST", body);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("ban", res.statusCode(), responseBody);
+            return new BanResult(username, "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            BanRaw parsed = GSON.fromJson(res.body(), BanRaw.class);
+            if (parsed == null) {
+                return new BanResult(username, "malformed response");
+            }
+            return new BanResult(parsed.username == null ? username : parsed.username, null);
+        } catch (Exception ex) {
+            return new BanResult(username, "parse failed: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * POST /api/v1/plugin/unban — remove a minecraft username from
+     * the ban list. `wasBanned` reports whether a row was actually
+     * deleted so the command can give honest feedback.
+     */
+    public UnbanResult unban(String username) throws IOException, InterruptedException {
+        String body = GSON.toJson(Map.of("username", username));
+        HttpResponse<String> res = signedSend("/api/v1/plugin/unban", "POST", body);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("unban", res.statusCode(), responseBody);
+            return new UnbanResult(username, false, "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            BanRaw parsed = GSON.fromJson(res.body(), BanRaw.class);
+            if (parsed == null) {
+                return new UnbanResult(username, false, "malformed response");
+            }
+            return new UnbanResult(
+                parsed.username == null ? username : parsed.username,
+                parsed.wasBanned != null && parsed.wasBanned,
+                null
+            );
+        } catch (Exception ex) {
+            return new UnbanResult(username, false, "parse failed: " + ex.getMessage());
+        }
+    }
+
     /**
      * POST /api/v1/plugin/heartbeat — server diagnostics.
      *
