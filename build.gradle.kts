@@ -90,6 +90,34 @@ tasks.shadowJar {
     exclude("META-INF/*.DSA")
     exclude("META-INF/*.RSA")
     exclude("META-INF/maven/**")
+
+    // sqlite-jdbc ships native binaries for ~25 OS/arch combos
+    // (~25 MB total) but only ONE loads at runtime per server.
+    // Strip the rare ones — keeps Linux x86_64 / aarch64 / musl
+    // (Alpine), Mac aarch64 (dev), Windows x86_64 (dev/Win
+    // server). Drops jar from ~14 MB to ~5 MB.
+    //
+    // If a merchant runs an unusual platform (RPi armv7, FreeBSD,
+    // ppc64, riscv64, 32-bit Linux/Windows, Mac Intel) they hit
+    // a UnsatisfiedLinkError at boot with a clear missing-library
+    // message — easier signal than a 14 MB jar weighing every
+    // deploy.
+    // Excludes match the ORIGINAL entry paths (before relocate
+    // renames org.sqlite → xyz.storra.plugin.shaded.sqlite).
+    exclude("org/sqlite/native/FreeBSD/**")
+    exclude("org/sqlite/native/Linux-Android/**")
+    exclude("org/sqlite/native/Linux/ppc64/**")
+    exclude("org/sqlite/native/Linux/riscv64/**")
+    exclude("org/sqlite/native/Linux/x86/**")
+    exclude("org/sqlite/native/Linux/arm/**")
+    exclude("org/sqlite/native/Linux/armv6/**")
+    exclude("org/sqlite/native/Linux/armv7/**")
+    exclude("org/sqlite/native/Linux-Musl/x86/**")
+    exclude("org/sqlite/native/Linux-Musl/aarch64/**")
+    exclude("org/sqlite/native/Mac/x86_64/**")
+    exclude("org/sqlite/native/Windows/x86/**")
+    exclude("org/sqlite/native/Windows/aarch64/**")
+    exclude("org/sqlite/native/Windows/armv7/**")
 }
 
 tasks.build {
