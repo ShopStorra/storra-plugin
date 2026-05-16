@@ -40,6 +40,7 @@ public final class StorraPlugin extends JavaPlugin {
     private OfflineQueue offlineQueue;
     private DeliveryHistory history;
     private DeliveryManager deliveryManager;
+    private StorraApiClient api;
 
     @Override
     public void onEnable() {
@@ -114,6 +115,16 @@ public final class StorraPlugin extends JavaPlugin {
     }
 
     /**
+     * Exposes the HMAC-signing API client so admin commands
+     * (/storra checkout, /storra sendlink, /storra lookup) can
+     * call the plugin REST surface. Returns null when the plugin
+     * isn't paired (services haven't started).
+     */
+    public StorraApiClient getApi() {
+        return api;
+    }
+
+    /**
      * Reload from disk. Called by /storra reload after a merchant
      * edits config.yml on a running server, AND by /storra pair
      * after writing the pairing values. Bounces services if the
@@ -142,7 +153,7 @@ public final class StorraPlugin extends JavaPlugin {
         if (!config.isPaired()) return;
 
         HmacSigner signer = new HmacSigner(config.serverId(), config.secret());
-        StorraApiClient api = new StorraApiClient(
+        api = new StorraApiClient(
             config.baseUrl(),
             signer,
             getLogger()

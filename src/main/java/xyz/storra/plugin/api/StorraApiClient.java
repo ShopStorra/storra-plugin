@@ -169,10 +169,110 @@ public final class StorraApiClient {
         }
     }
 
+    /** Result of /checkout-url — drives `/storra checkout` + `/storra sendlink`. */
+    public record CheckoutUrlResult(
+        String url,
+        String packageId,
+        String packageName,
+        String storeName,
+        String error
+    ) {
+        public boolean ok() { return error == null; }
+    }
+
+    private static final class CheckoutUrlRaw {
+        String url;
+        String packageId;
+        String packageName;
+        String storeName;
+        String error;
+    }
+
+    /** Result of /lookup — drives `/storra lookup`. */
+    public record LookupResult(
+        String username,
+        List<LookupOrder> orders,
+        String error
+    ) {
+        public boolean ok() { return error == null; }
+    }
+
+    public record LookupOrder(
+        String transactionId,
+        long totalAmount,
+        String currency,
+        String status,
+        String createdAt,
+        List<LookupItem> items
+    ) {}
+
+    public record LookupItem(String name, int qty) {}
+
+    private static final class LookupRaw {
+        String username;
+        List<LookupOrder> orders;
+        String error;
+    }
+
     private static final class RawHeartbeatResponse {
         Boolean ok;
         String latestVersion;
         Boolean updateAvailable;
+    }
+
+    /**
+     * POST /api/v1/plugin/checkout-url — resolve a package
+     * reference (slug / uuid / name) into a clickable storefront
+     * URL. Drives `/storra checkout` + `/storra sendlink`.
+     */
+    public CheckoutUrlResult checkoutUrl(String packageRef) throws IOException, InterruptedException {
+        String body = GSON.toJson(Map.of("packageRef", packageRef));
+        HttpResponse<String> res = signedSend("/api/v1/plugin/checkout-url", "POST", body);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            String error = "HTTP " + res.statusCode() + " — " + responseBody;
+            logNonOk("checkout-url", res.statusCode(), responseBody);
+            return new CheckoutUrlResult(null, null, null, null, error);
+        }
+        try {
+            CheckoutUrlRaw parsed = GSON.fromJson(res.body(), CheckoutUrlRaw.class);
+            if (parsed == null || parsed.url == null) {
+                return new CheckoutUrlResult(null, null, null, null, "malformed response");
+            }
+            return new CheckoutUrlResult(parsed.url, parsed.packageId, parsed.packageName, parsed.storeName, null);
+        } catch (Exception ex) {
+            return new CheckoutUrlResult(null, null, null, null, "parse failed: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * GET /api/v1/plugin/lookup?username=X — recent orders for a
+     * minecraft player. Drives `/storra lookup`.
+     */
+    public LookupResult lookup(String username) throws IOException, InterruptedException {
+        String path = "/api/v1/plugin/lookup?username="
+            + java.net.URLEncoder.encode(username, StandardCharsets.UTF_8);
+        HttpResponse<String> res = signedSend(path, "GET", EMPTY_BODY);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("lookup", res.statusCode(), responseBody);
+            return new LookupResult(username, java.util.List.of(),
+                "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            LookupRaw parsed = GSON.fromJson(res.body(), LookupRaw.class);
+            if (parsed == null) {
+                return new LookupResult(username, java.util.List.of(), "malformed response");
+            }
+            return new LookupResult(
+                parsed.username == null ? username : parsed.username,
+                parsed.orders == null ? java.util.List.of() : parsed.orders,
+                null
+            );
+        } catch (Exception ex) {
+            return new LookupResult(username, java.util.List.of(),
+                "parse failed: " + ex.getMessage());
+        }
     }
 
     /**
