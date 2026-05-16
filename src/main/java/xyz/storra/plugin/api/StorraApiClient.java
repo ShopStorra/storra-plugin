@@ -338,6 +338,134 @@ public final class StorraApiClient {
         }
     }
 
+    // ── Coupon CRUD (drives /storra coupon) ──────────────────────────
+
+    public record CouponRow(
+        String id,
+        String code,
+        String discountType,   // "percentage" | "fixed"
+        double discountValue,  // 0-100 for %, dollars for fixed
+        Integer maxUses,       // null = unlimited
+        Integer currentUses,
+        Boolean active,
+        String expiresAt       // ISO-8601 or null
+    ) {}
+
+    public record CouponListResult(java.util.List<CouponRow> coupons, String error) {
+        public boolean ok() { return error == null; }
+    }
+
+    public record CouponCreateResult(CouponRow coupon, String error) {
+        public boolean ok() { return error == null; }
+    }
+
+    public record CouponDeleteResult(String code, boolean deleted, String error) {
+        public boolean ok() { return error == null; }
+    }
+
+    private static final class CouponCreateRaw {
+        Boolean ok;
+        CouponRow coupon;
+        String error;
+    }
+
+    private static final class CouponListRaw {
+        java.util.List<CouponRow> coupons;
+        String error;
+    }
+
+    private static final class CouponDeleteRaw {
+        Boolean ok;
+        String code;
+        Boolean deleted;
+        String error;
+    }
+
+    /**
+     * POST /api/v1/plugin/coupon-create — drives
+     * `/storra coupon create <code> <discount> [expires] [maxUses]`.
+     * discountValue is 0-100 for percentage type, dollars for fixed.
+     */
+    public CouponCreateResult couponCreate(
+        String code,
+        String discountType,
+        double discountValue,
+        Integer maxUses,
+        String expiresIsoOrNull
+    ) throws IOException, InterruptedException {
+        java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("code", code);
+        payload.put("discountType", discountType);
+        payload.put("discountValue", discountValue);
+        if (maxUses != null) payload.put("maxUses", maxUses);
+        if (expiresIsoOrNull != null) payload.put("expiresAt", expiresIsoOrNull);
+        String body = GSON.toJson(payload);
+        HttpResponse<String> res = signedSend("/api/v1/plugin/coupon-create", "POST", body);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("coupon-create", res.statusCode(), responseBody);
+            return new CouponCreateResult(null,
+                "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            CouponCreateRaw parsed = GSON.fromJson(res.body(), CouponCreateRaw.class);
+            if (parsed == null || parsed.coupon == null) {
+                return new CouponCreateResult(null, "malformed response");
+            }
+            return new CouponCreateResult(parsed.coupon, null);
+        } catch (Exception ex) {
+            return new CouponCreateResult(null, "parse failed: " + ex.getMessage());
+        }
+    }
+
+    public CouponListResult couponList() throws IOException, InterruptedException {
+        HttpResponse<String> res = signedSend("/api/v1/plugin/coupon-list", "POST", EMPTY_BODY);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("coupon-list", res.statusCode(), responseBody);
+            return new CouponListResult(java.util.List.of(),
+                "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            CouponListRaw parsed = GSON.fromJson(res.body(), CouponListRaw.class);
+            if (parsed == null) {
+                return new CouponListResult(java.util.List.of(), "malformed response");
+            }
+            return new CouponListResult(
+                parsed.coupons == null ? java.util.List.of() : parsed.coupons,
+                null
+            );
+        } catch (Exception ex) {
+            return new CouponListResult(java.util.List.of(),
+                "parse failed: " + ex.getMessage());
+        }
+    }
+
+    public CouponDeleteResult couponDelete(String code) throws IOException, InterruptedException {
+        String body = GSON.toJson(Map.of("code", code));
+        HttpResponse<String> res = signedSend("/api/v1/plugin/coupon-delete", "POST", body);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("coupon-delete", res.statusCode(), responseBody);
+            return new CouponDeleteResult(code, false,
+                "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            CouponDeleteRaw parsed = GSON.fromJson(res.body(), CouponDeleteRaw.class);
+            if (parsed == null) {
+                return new CouponDeleteResult(code, false, "malformed response");
+            }
+            return new CouponDeleteResult(
+                parsed.code == null ? code : parsed.code,
+                parsed.deleted != null && parsed.deleted,
+                null
+            );
+        } catch (Exception ex) {
+            return new CouponDeleteResult(code, false,
+                "parse failed: " + ex.getMessage());
+        }
+    }
+
     /** Result of /ban — drives `/storra ban`. */
     public record BanResult(String username, String error) {
         public boolean ok() { return error == null; }

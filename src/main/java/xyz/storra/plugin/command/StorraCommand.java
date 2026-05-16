@@ -73,6 +73,8 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 return handleBan(sender, args);
             case "unban":
                 return handleUnban(sender, args);
+            case "coupon":
+                return handleCoupon(sender, args);
             case "help":
             case "?":
                 sendUsage(sender);
@@ -499,6 +501,158 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private boolean handleCoupon(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sendCouponUsage(sender);
+            return true;
+        }
+        StorraApiClient api = plugin.getApi();
+        if (api == null) {
+            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            return true;
+        }
+        String op = args[1].toLowerCase();
+        switch (op) {
+            case "list":
+                return handleCouponList(sender, api);
+            case "create":
+                return handleCouponCreate(sender, api, args);
+            case "delete":
+            case "remove":
+                return handleCouponDelete(sender, api, args);
+            default:
+                sendCouponUsage(sender);
+                return true;
+        }
+    }
+
+    private void sendCouponUsage(CommandSender sender) {
+        sender.sendMessage("§7Usage:");
+        sender.sendMessage("§7   §f/storra coupon list");
+        sender.sendMessage("§7   §f/storra coupon create <code> <percent> §7(e.g. SUMMER 25)");
+        sender.sendMessage("§7   §f/storra coupon create <code> <amount> fixed §7(dollars off)");
+        sender.sendMessage("§7   §f/storra coupon delete <code>");
+    }
+
+    private boolean handleCouponList(CommandSender sender, StorraApiClient api) {
+        sender.sendMessage("§7[Storra] fetching coupons…");
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                StorraApiClient.CouponListResult result = api.couponList();
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (!result.ok()) {
+                        sender.sendMessage("§c[Storra] " + result.error());
+                        return;
+                    }
+                    if (result.coupons().isEmpty()) {
+                        sender.sendMessage("§7[Storra] no coupons configured.");
+                        return;
+                    }
+                    sender.sendMessage("§6§lActive coupons §7(" + result.coupons().size() + ")");
+                    for (StorraApiClient.CouponRow c : result.coupons()) {
+                        String discount = "percentage".equals(c.discountType())
+                            ? ((int) c.discountValue()) + "% off"
+                            : "$" + String.format(java.util.Locale.ROOT, "%.2f", c.discountValue()) + " off";
+                        String uses = c.maxUses() == null
+                            ? (c.currentUses() == null ? "" : "§7 — " + c.currentUses() + " uses")
+                            : "§7 — " + c.currentUses() + "/" + c.maxUses() + " uses";
+                        String status = Boolean.FALSE.equals(c.active()) ? " §c[inactive]" : "";
+                        sender.sendMessage("§7  §e" + c.code() + " §f" + discount + uses + status);
+                    }
+                });
+            } catch (Exception ex) {
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                    sender.sendMessage("§c[Storra] list failed: " + ex.getMessage())
+                );
+            }
+        });
+        return true;
+    }
+
+    private boolean handleCouponCreate(CommandSender sender, StorraApiClient api, String[] args) {
+        // Args: 0=coupon, 1=create, 2=code, 3=value, 4=(optional)fixed
+        if (args.length < 4) {
+            sender.sendMessage("§7Usage: §f/storra coupon create <code> <percent> §7(or <amount> fixed)");
+            return true;
+        }
+        String code = args[2];
+        if (code.length() > 32) {
+            sender.sendMessage("§c[Storra] code too long (max 32 chars).");
+            return true;
+        }
+        double value;
+        try {
+            value = Double.parseDouble(args[3]);
+        } catch (NumberFormatException ex) {
+            sender.sendMessage("§c[Storra] discount must be a number.");
+            return true;
+        }
+        if (value <= 0) {
+            sender.sendMessage("§c[Storra] discount must be > 0.");
+            return true;
+        }
+        String discountType = args.length > 4 && args[4].equalsIgnoreCase("fixed")
+            ? "fixed" : "percentage";
+        if ("percentage".equals(discountType) && value > 100) {
+            sender.sendMessage("§c[Storra] percent must be ≤100. Use 'fixed' for dollar-amount discounts.");
+            return true;
+        }
+        sender.sendMessage("§7[Storra] creating coupon §f" + code.toUpperCase() + "§7…");
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                StorraApiClient.CouponCreateResult result = api.couponCreate(
+                    code, discountType, value, null, null
+                );
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (!result.ok()) {
+                        sender.sendMessage("§c[Storra] create failed: " + result.error());
+                        return;
+                    }
+                    String discount = "percentage".equals(result.coupon().discountType())
+                        ? ((int) result.coupon().discountValue()) + "% off"
+                        : "$" + String.format(java.util.Locale.ROOT, "%.2f", result.coupon().discountValue()) + " off";
+                    sender.sendMessage("§a[Storra] coupon §f" + result.coupon().code()
+                        + " §acreated — " + discount);
+                });
+            } catch (Exception ex) {
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                    sender.sendMessage("§c[Storra] create failed: " + ex.getMessage())
+                );
+            }
+        });
+        return true;
+    }
+
+    private boolean handleCouponDelete(CommandSender sender, StorraApiClient api, String[] args) {
+        if (args.length < 3) {
+            sender.sendMessage("§7Usage: §f/storra coupon delete <code>");
+            return true;
+        }
+        String code = args[2];
+        sender.sendMessage("§7[Storra] deleting coupon §f" + code.toUpperCase() + "§7…");
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                StorraApiClient.CouponDeleteResult result = api.couponDelete(code);
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (!result.ok()) {
+                        sender.sendMessage("§c[Storra] delete failed: " + result.error());
+                        return;
+                    }
+                    if (result.deleted()) {
+                        sender.sendMessage("§a[Storra] coupon §f" + result.code() + " §adeleted.");
+                    } else {
+                        sender.sendMessage("§7[Storra] no coupon found with code §f" + result.code() + "§7.");
+                    }
+                });
+            } catch (Exception ex) {
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                    sender.sendMessage("§c[Storra] delete failed: " + ex.getMessage())
+                );
+            }
+        });
+        return true;
+    }
+
     private static String joinArgs(String[] args, int from) {
         StringBuilder sb = new StringBuilder();
         for (int i = from; i < args.length; i++) {
@@ -525,6 +679,11 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("§7   /storra ban §f<player> [reason]§7    block a player from purchasing");
         sender.sendMessage("§7   /storra unban §f<player>§7           lift a purchase ban");
         sender.sendMessage("");
+        sender.sendMessage("§e Promotions");
+        sender.sendMessage("§7   /storra coupon list                  show active coupons");
+        sender.sendMessage("§7   /storra coupon create §f<code> <%>§7  create a percent-off code");
+        sender.sendMessage("§7   /storra coupon delete §f<code>§7      remove a coupon code");
+        sender.sendMessage("");
         sender.sendMessage("§e Operations");
         sender.sendMessage("§7   /storra forcecheck                   poll for pending deliveries now");
         sender.sendMessage("§7   /storra history                      last N deliveries on this server");
@@ -538,7 +697,12 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         "forcecheck", "debug",
         "checkout", "sendlink", "lookup",
         "ban", "unban",
+        "coupon",
         "help"
+    );
+
+    private static final List<String> COUPON_OPS = Arrays.asList(
+        "list", "create", "delete"
     );
 
     @Override
@@ -557,6 +721,12 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         if (args.length == 2 && args[0].equalsIgnoreCase("debug")) {
             String partial = args[1].toLowerCase();
             return Arrays.asList("on", "off").stream()
+                .filter(s -> s.startsWith(partial))
+                .toList();
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("coupon")) {
+            String partial = args[1].toLowerCase();
+            return COUPON_OPS.stream()
                 .filter(s -> s.startsWith(partial))
                 .toList();
         }
