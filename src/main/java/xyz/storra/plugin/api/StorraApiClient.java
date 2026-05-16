@@ -275,6 +275,69 @@ public final class StorraApiClient {
         }
     }
 
+    /** Result of /player-stats — drives the PAPI StorraExpansion. */
+    public record PlayerStatsResult(
+        String username,
+        long totalSpent,
+        int orderCount,
+        String lastPurchase,
+        String lastPurchaseAt,
+        String currency,
+        boolean isCustomer,
+        String error
+    ) {
+        public boolean ok() { return error == null; }
+        public static PlayerStatsResult failed(String username, String error) {
+            return new PlayerStatsResult(username, 0, 0, null, null, null, false, error);
+        }
+    }
+
+    private static final class PlayerStatsRaw {
+        String username;
+        Long totalSpent;
+        Integer orderCount;
+        String lastPurchase;
+        String lastPurchaseAt;
+        String currency;
+        Boolean isCustomer;
+        String error;
+    }
+
+    /**
+     * GET /api/v1/plugin/player-stats?username=X — aggregate spend
+     * + order count + last purchase for one minecraft username.
+     * Powers the StorraExpansion's %storra_*% placeholders.
+     */
+    public PlayerStatsResult playerStats(String username) throws IOException, InterruptedException {
+        String path = "/api/v1/plugin/player-stats?username="
+            + java.net.URLEncoder.encode(username, StandardCharsets.UTF_8);
+        HttpResponse<String> res = signedSend(path, "GET", EMPTY_BODY);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("player-stats", res.statusCode(), responseBody);
+            return PlayerStatsResult.failed(username,
+                "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            PlayerStatsRaw parsed = GSON.fromJson(res.body(), PlayerStatsRaw.class);
+            if (parsed == null) {
+                return PlayerStatsResult.failed(username, "malformed response");
+            }
+            return new PlayerStatsResult(
+                parsed.username == null ? username : parsed.username,
+                parsed.totalSpent == null ? 0L : parsed.totalSpent,
+                parsed.orderCount == null ? 0 : parsed.orderCount,
+                parsed.lastPurchase,
+                parsed.lastPurchaseAt,
+                parsed.currency,
+                parsed.isCustomer != null && parsed.isCustomer,
+                null
+            );
+        } catch (Exception ex) {
+            return PlayerStatsResult.failed(username, "parse failed: " + ex.getMessage());
+        }
+    }
+
     /** Result of /ban — drives `/storra ban`. */
     public record BanResult(String username, String error) {
         public boolean ok() { return error == null; }

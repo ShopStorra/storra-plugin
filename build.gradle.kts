@@ -30,11 +30,22 @@ repositories {
     maven("https://repo.papermc.io/repository/maven-public/") {
         name = "papermc"
     }
+    maven("https://repo.extendedclip.com/content/repositories/placeholderapi/") {
+        name = "placeholderapi"
+    }
 }
 
 dependencies {
     // Compile-time only — Paper provides this at runtime.
     compileOnly("io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT")
+
+    // PlaceholderAPI is a soft-dependency. We compile against it so
+    // StorraExpansion can extend PlaceholderExpansion; at runtime
+    // the StorraPlugin only loads + registers the expansion if PAPI
+    // is present (Bukkit.getPluginManager().getPlugin("PlaceholderAPI")
+    // != null). Server admins without PAPI installed see no change
+    // in behavior — placeholders just aren't available.
+    compileOnly("me.clip:placeholderapi:2.11.6")
 
     // Bundled at runtime via shadowJar.
     implementation("com.google.code.gson:gson:2.11.0")

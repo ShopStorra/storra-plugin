@@ -41,6 +41,7 @@ public final class StorraPlugin extends JavaPlugin {
     private DeliveryHistory history;
     private DeliveryManager deliveryManager;
     private StorraApiClient api;
+    private xyz.storra.plugin.papi.StorraExpansion papiExpansion;
 
     @Override
     public void onEnable() {
@@ -172,6 +173,29 @@ public final class StorraPlugin extends JavaPlugin {
             this
         );
 
+        // PlaceholderAPI integration — opt-in soft-dep. Only register
+        // when PAPI is actually installed; servers without it see no
+        // change in behavior. Wrapped in try/catch so a PAPI version
+        // mismatch (rare) can't take down the rest of the plugin.
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
+            try {
+                papiExpansion = new xyz.storra.plugin.papi.StorraExpansion(this, api, "");
+                if (papiExpansion.register()) {
+                    getLogger().info("PlaceholderAPI integration registered (%storra_*%).");
+                } else {
+                    getLogger().warning(
+                        "PlaceholderAPI present but expansion register returned false."
+                    );
+                    papiExpansion = null;
+                }
+            } catch (Throwable t) {
+                getLogger().warning(
+                    "PlaceholderAPI integration failed to load: " + t.getMessage()
+                );
+                papiExpansion = null;
+            }
+        }
+
         // ANSI cyan — Paper's TerminalConsoleAppender renders escape
         // codes, so the line pops in the server console alongside the
         // usual plain-white info chatter.
@@ -192,6 +216,14 @@ public final class StorraPlugin extends JavaPlugin {
         if (heartbeatService != null) {
             heartbeatService.stop();
             heartbeatService = null;
+        }
+        if (papiExpansion != null) {
+            try {
+                papiExpansion.unregister();
+            } catch (Throwable ignored) {
+                // PAPI may have already cleaned up on its own disable.
+            }
+            papiExpansion = null;
         }
         org.bukkit.event.HandlerList.unregisterAll(this);
     }

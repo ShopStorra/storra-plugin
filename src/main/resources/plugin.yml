@@ -8,6 +8,11 @@ description: |
   tenant + executes in-game delivery commands when customers buy.
 website: https://storra.xyz
 
+# PAPI provides %storra_*% placeholders for scoreboard / tab / chat
+# plugins. Soft-depend means the plugin loads + works without it;
+# StorraExpansion only registers when PAPI is present.
+softdepend: [PlaceholderAPI]
+
 commands:
   storra:
     description: Storra plugin admin commands.
