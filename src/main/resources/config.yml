@@ -34,17 +34,18 @@ persistence:
 
 # Delivery receipt — the moment a buyer's purchase actually lands.
 #
-# When a delivery successfully fires AND the player is online, the
-# plugin sends a chat message + plays a sound + spawns particles.
-# Defaults are tuned to feel celebratory without being intrusive;
-# turn any piece off by clearing its value (set to "") or setting
-# enabled to false to silence everything.
+# OFF by default. Flip enabled: true to opt in. When on, every
+# successful delivery to an online player fires the configured
+# chat message + sound + particle burst + optional title.
 #
-# Template variables:
+# Turn any individual channel off by clearing its value (set to "");
+# everything else stays active.
+#
+# Template variables in any string:
 #   {package}  — the package name (e.g. "VIP Rank")
 #   {player}   — the player's name
 receipt:
-  enabled: true
+  enabled: false
 
   # Chat message. Empty string skips the message. Bukkit & color
   # codes work (&6 gold, &e yellow, &b aqua, &l bold, &o italic).

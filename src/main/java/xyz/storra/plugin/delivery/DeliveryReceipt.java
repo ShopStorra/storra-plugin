@@ -47,7 +47,11 @@ public final class DeliveryReceipt {
         if (player == null) return;
 
         FileConfiguration cfg = plugin.getConfig();
-        if (!cfg.getBoolean("receipt.enabled", true)) return;
+        // Off by default — merchants opt in via config.yml. Keeps
+        // the post-purchase experience under their control rather
+        // than imposing a sound + particle burst they didn't ask
+        // for.
+        if (!cfg.getBoolean("receipt.enabled", false)) return;
 
         String packageName = task.productName() != null && !task.productName().isEmpty()
             ? task.productName()
