@@ -2,11 +2,9 @@ package xyz.storra.plugin.api;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.google.gson.reflect.TypeToken;
 import xyz.storra.plugin.delivery.DeliveryTask;
 
 import java.io.IOException;
-import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -39,8 +37,12 @@ public final class StorraApiClient {
         .build();
 
     private static final Gson GSON = new Gson();
-    private static final Type TASK_LIST_TYPE = new TypeToken<List<DeliveryTask>>() {}.getType();
     private static final String EMPTY_BODY = "";
+
+    /** Wire envelope for `GET /pending`: `{ "commands": [ DeliveryTask, ... ] }`. */
+    private static final class PendingResponse {
+        List<DeliveryTask> commands;
+    }
 
     private final String baseUrl;
     private final HmacSigner signer;
@@ -95,59 +97,114 @@ public final class StorraApiClient {
 
     // ── Authenticated actions ─────────────────────────────────────────────
 
+    /**
+     * Helper — log non-200 responses, downgrading to INFO when the
+     * status is a transient gateway error (502/503/504). Those
+     * codes mean the reverse-proxy (Caddy) couldn't reach the
+     * upstream app for a few seconds — typically during a Storra
+     * deploy's container-recreate window. Next poll/heartbeat tick
+     * retries naturally; no operator action needed.
+     */
+    private void logNonOk(String op, int status, String body) {
+        boolean transientGateway = status == 502 || status == 503 || status == 504;
+        String msg = op + ": HTTP " + status + " — " + body;
+        if (transientGateway) {
+            log.info(msg + " (transient — retrying on next tick)");
+        } else {
+            log.warning(msg);
+        }
+    }
+
     /** GET /api/v1/plugin/pending — claim ready-to-deliver tasks. */
     public List<DeliveryTask> fetchPending() throws IOException, InterruptedException {
         HttpResponse<String> res = signedSend("/api/v1/plugin/pending", "GET", EMPTY_BODY);
         if (res.statusCode() != 200) {
-            log.warning("fetchPending: HTTP " + res.statusCode() + " — " + res.body());
+            logNonOk("fetchPending", res.statusCode(), res.body());
             return Collections.emptyList();
         }
-        List<DeliveryTask> tasks = GSON.fromJson(res.body(), TASK_LIST_TYPE);
-        return tasks == null ? Collections.emptyList() : tasks;
+        PendingResponse parsed = GSON.fromJson(res.body(), PendingResponse.class);
+        if (parsed == null || parsed.commands == null) {
+            return Collections.emptyList();
+        }
+        return parsed.commands;
     }
 
     /** POST /api/v1/plugin/confirm — mark a delivery successful. */
-    public boolean confirm(long taskId) throws IOException, InterruptedException {
-        String body = GSON.toJson(Map.of("task_id", taskId));
+    public boolean confirm(String commandId) throws IOException, InterruptedException {
+        String body = GSON.toJson(Map.of("commandId", commandId));
         HttpResponse<String> res = signedSend("/api/v1/plugin/confirm", "POST", body);
         if (res.statusCode() != 200) {
-            log.warning("confirm: HTTP " + res.statusCode() + " — " + res.body());
+            logNonOk("confirm", res.statusCode(), res.body());
             return false;
         }
         return true;
     }
 
     /** POST /api/v1/plugin/fail — report a delivery failure. */
-    public boolean fail(long taskId, String reason) throws IOException, InterruptedException {
+    public boolean fail(String commandId, String reason) throws IOException, InterruptedException {
         String body = GSON.toJson(Map.of(
-            "task_id", taskId,
+            "commandId", commandId,
             "reason", reason == null ? "" : reason
         ));
         HttpResponse<String> res = signedSend("/api/v1/plugin/fail", "POST", body);
         if (res.statusCode() != 200) {
-            log.warning("fail: HTTP " + res.statusCode() + " — " + res.body());
+            logNonOk("fail", res.statusCode(), res.body());
             return false;
         }
         return true;
     }
 
-    /** POST /api/v1/plugin/heartbeat — server diagnostics. */
+    /**
+     * POST /api/v1/plugin/heartbeat — server diagnostics.
+     *
+     * Server responds with 200 + `{ok: true, ...}` on success, or
+     * 200 + `{ok: false, reason: "transient"}` when a downstream
+     * write briefly fails (typically during a Storra deploy's
+     * container-recreate window). The transient case is INFO-level
+     * since the next heartbeat will retry naturally; only hard
+     * non-200s warrant a WARNING.
+     */
     public boolean heartbeat(HeartbeatStats stats) throws IOException, InterruptedException {
         String body = GSON.toJson(stats);
         HttpResponse<String> res = signedSend("/api/v1/plugin/heartbeat", "POST", body);
         if (res.statusCode() != 200) {
-            log.warning("heartbeat: HTTP " + res.statusCode() + " — " + res.body());
+            logNonOk("heartbeat", res.statusCode(), res.body());
+            return false;
+        }
+        // Inspect the body for the soft-failure marker.
+        String responseBody = res.body();
+        if (responseBody != null && responseBody.contains("\"ok\":false")) {
+            String reason = responseBody.contains("\"reason\":\"")
+                ? responseBody.replaceAll(".*\"reason\":\"([^\"]*)\".*", "$1")
+                : "unknown";
+            log.info("heartbeat: server soft-fail (" + reason
+                + ") — retrying on next tick");
             return false;
         }
         return true;
     }
 
+    /**
+     * Wire shape for POST /heartbeat. Field names are camelCase to
+     * match what Storra's plugin REST handler reads
+     * (`src/routes/api/v1/plugin/$.ts:handleHeartbeat`) — the v1
+     * snake_case shape silently landed NULLs in game_servers
+     * because the server's `body.playerCount` lookup never found
+     * `body.player_count`. Field set matches every column the
+     * server is willing to write; null/-1 sentinels are filtered
+     * server-side so partial snapshots are fine.
+     */
     public record HeartbeatStats(
-        @com.google.gson.annotations.SerializedName("plugin_version") String pluginVersion,
-        @com.google.gson.annotations.SerializedName("player_count") int playerCount,
+        String version,
+        int playerCount,
+        int maxPlayers,
         double tps,
-        @com.google.gson.annotations.SerializedName("memory_mb") long memoryMb,
-        @com.google.gson.annotations.SerializedName("cpu_percent") double cpuPercent
+        double mspt,
+        long memoryUsedMb,
+        long memoryMaxMb,
+        double cpuPercent,
+        int entityCount,
+        int chunkCount
     ) {}
 
     // ── Internals ─────────────────────────────────────────────────────────

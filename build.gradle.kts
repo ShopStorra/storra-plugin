@@ -54,6 +54,19 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(21)
 }
 
+// Expand ${version} in plugin.yml at build time so the manifest
+// reports the actual Gradle project version. Without this, Paper
+// shows the literal "${version}" string to the dashboard (and the
+// version-check cron treats every server as outdated). Scoped to
+// plugin.yml to avoid touching binary resources.
+tasks.processResources {
+    val versionString = project.version.toString()
+    inputs.property("version", versionString)
+    filesMatching("plugin.yml") {
+        expand("version" to versionString)
+    }
+}
+
 tasks.test {
     useJUnitPlatform()
     testLogging {

@@ -99,22 +99,26 @@ class StorraApiClientIntegrationTest {
 
     @Test
     void fetchPending_parses_task_list() throws Exception {
+        // v2 wire shape: { "commands": [
+        //   { "id": "<uuid>", "command": "<string>",
+        //     "playerName": "<name>"|null, "requireOnline": bool } ] }
         wireMock.stubFor(get(urlEqualTo("/api/v1/plugin/pending"))
             .willReturn(aResponse()
                 .withStatus(200)
                 .withHeader("Content-Type", "application/json")
                 .withBody(
-                    "[{\"task_id\":42,\"product_id\":\"vip\",\"command\":\"lp user Alice parent add vip\"," +
-                    "\"player_name\":\"Alice\",\"player_uuid\":\"11111111-1111-1111-1111-111111111111\"," +
-                    "\"require_online\":true}]"
+                    "{\"commands\":[" +
+                    "{\"id\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"," +
+                    "\"command\":\"lp user Alice parent add vip\"," +
+                    "\"playerName\":\"Alice\"," +
+                    "\"requireOnline\":true}]}"
                 )
             ));
 
         List<DeliveryTask> tasks = client.fetchPending();
         assertThat(tasks).hasSize(1);
         DeliveryTask t = tasks.get(0);
-        assertThat(t.taskId()).isEqualTo(42L);
-        assertThat(t.productId()).isEqualTo("vip");
+        assertThat(t.commandId()).isEqualTo("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
         assertThat(t.command()).isEqualTo("lp user Alice parent add vip");
         assertThat(t.playerName()).isEqualTo("Alice");
         assertThat(t.requireOnline()).isTrue();
@@ -137,21 +141,33 @@ class StorraApiClientIntegrationTest {
     }
 
     @Test
-    void confirm_sends_task_id_and_returns_true_on_200() throws Exception {
+    void fetchPending_returns_empty_when_envelope_has_empty_commands() throws Exception {
+        wireMock.stubFor(get(urlEqualTo("/api/v1/plugin/pending"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"commands\":[]}")
+            ));
+
+        assertThat(client.fetchPending()).isEmpty();
+    }
+
+    @Test
+    void confirm_sends_commandId_and_returns_true_on_200() throws Exception {
         wireMock.stubFor(post(urlEqualTo("/api/v1/plugin/confirm"))
-            .withRequestBody(equalToJson("{\"task_id\":99}"))
+            .withRequestBody(equalToJson("{\"commandId\":\"cmd-99\"}"))
             .willReturn(aResponse().withStatus(200).withBody("{\"ok\":true}")));
 
-        assertThat(client.confirm(99L)).isTrue();
+        assertThat(client.confirm("cmd-99")).isTrue();
     }
 
     @Test
     void fail_sends_reason_and_returns_true_on_200() throws Exception {
         wireMock.stubFor(post(urlEqualTo("/api/v1/plugin/fail"))
-            .withRequestBody(equalToJson("{\"task_id\":100,\"reason\":\"command threw\"}"))
+            .withRequestBody(equalToJson("{\"commandId\":\"cmd-100\",\"reason\":\"command threw\"}"))
             .willReturn(aResponse().withStatus(200).withBody("{\"ok\":true}")));
 
-        assertThat(client.fail(100L, "command threw")).isTrue();
+        assertThat(client.fail("cmd-100", "command threw")).isTrue();
     }
 
     @Test
@@ -160,14 +176,19 @@ class StorraApiClientIntegrationTest {
             .willReturn(aResponse().withStatus(200).withBody("{\"ok\":true}")));
 
         StorraApiClient.HeartbeatStats stats = new StorraApiClient.HeartbeatStats(
-            "0.1.0", 12, 19.8, 256L, 23.5
+            "0.1.0", 12, 100, 19.8, 47.3, 1024L, 4096L, 23.5, 1500, 240
         );
         assertThat(client.heartbeat(stats)).isTrue();
 
+        // camelCase to match the server's handleHeartbeat contract.
         wireMock.verify(postRequestedFor(urlEqualTo("/api/v1/plugin/heartbeat"))
             .withRequestBody(equalToJson(
-                "{\"plugin_version\":\"0.1.0\",\"player_count\":12,\"tps\":19.8," +
-                "\"memory_mb\":256,\"cpu_percent\":23.5}"
+                "{\"version\":\"0.1.0\"," +
+                "\"playerCount\":12,\"maxPlayers\":100," +
+                "\"tps\":19.8,\"mspt\":47.3," +
+                "\"memoryUsedMb\":1024,\"memoryMaxMb\":4096," +
+                "\"cpuPercent\":23.5," +
+                "\"entityCount\":1500,\"chunkCount\":240}"
             )));
     }
 
@@ -175,7 +196,7 @@ class StorraApiClientIntegrationTest {
     void confirm_returns_false_on_5xx() throws Exception {
         wireMock.stubFor(post(urlEqualTo("/api/v1/plugin/confirm"))
             .willReturn(aResponse().withStatus(500)));
-        assertThat(client.confirm(7L)).isFalse();
+        assertThat(client.confirm("cmd-7")).isFalse();
     }
 
     private static RequestPatternBuilder allFourHmacHeaders(RequestPatternBuilder base) {

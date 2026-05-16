@@ -28,20 +28,20 @@ public final class DeliveryHistory {
     }
 
     public void recordDelivered(DeliveryTask task) throws SQLException {
-        record(task.taskId(), "delivered", task.playerName(), task.command(), null);
+        record(task.commandId(), "delivered", task.playerName(), task.command(), null);
     }
 
     public void recordFailed(DeliveryTask task, String reason) throws SQLException {
-        record(task.taskId(), "failed", task.playerName(), task.command(), reason);
+        record(task.commandId(), "failed", task.playerName(), task.command(), reason);
     }
 
-    private void record(long taskId, String status, String playerName, String command, String reason) throws SQLException {
+    private void record(String commandId, String status, String playerName, String command, String reason) throws SQLException {
         Connection conn = database.connection();
         try (PreparedStatement st = conn.prepareStatement(
             "INSERT OR REPLACE INTO delivery_history " +
-            "(task_id, status, player_name, command, reason) VALUES (?, ?, ?, ?, ?)"
+            "(command_id, status, player_name, command, reason) VALUES (?, ?, ?, ?, ?)"
         )) {
-            st.setLong(1, taskId);
+            st.setString(1, commandId);
             st.setString(2, status);
             st.setString(3, playerName);
             st.setString(4, command);
@@ -50,8 +50,8 @@ public final class DeliveryHistory {
         }
         // Prune past retention. Cheap — bounded by N rows.
         try (PreparedStatement st = conn.prepareStatement(
-            "DELETE FROM delivery_history WHERE task_id NOT IN (" +
-            "  SELECT task_id FROM delivery_history " +
+            "DELETE FROM delivery_history WHERE command_id NOT IN (" +
+            "  SELECT command_id FROM delivery_history " +
             "  ORDER BY recorded_at DESC LIMIT ?" +
             ")"
         )) {
@@ -64,14 +64,14 @@ public final class DeliveryHistory {
         Connection conn = database.connection();
         List<HistoryRow> rows = new ArrayList<>();
         try (PreparedStatement st = conn.prepareStatement(
-            "SELECT task_id, status, player_name, command, reason, recorded_at " +
+            "SELECT command_id, status, player_name, command, reason, recorded_at " +
             "FROM delivery_history ORDER BY recorded_at DESC LIMIT ?"
         )) {
             st.setInt(1, limit);
             try (ResultSet rs = st.executeQuery()) {
                 while (rs.next()) {
                     rows.add(new HistoryRow(
-                        rs.getLong("task_id"),
+                        rs.getString("command_id"),
                         rs.getString("status"),
                         rs.getString("player_name"),
                         rs.getString("command"),
@@ -85,7 +85,7 @@ public final class DeliveryHistory {
     }
 
     public record HistoryRow(
-        long taskId,
+        String commandId,
         String status,
         String playerName,
         String command,

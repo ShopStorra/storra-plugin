@@ -42,15 +42,15 @@ class OfflineQueueTest {
             st.execute("PRAGMA foreign_keys = ON");
             st.execute(
                 "CREATE TABLE delivery_offline_queue (" +
-                "  task_id INTEGER PRIMARY KEY, " +
-                "  player_uuid TEXT NOT NULL, " +
+                "  command_id TEXT PRIMARY KEY, " +
+                "  player_name_lower TEXT NOT NULL, " +
                 "  command TEXT NOT NULL, " +
                 "  queued_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)" +
                 ")"
             );
             st.execute(
-                "CREATE INDEX delivery_offline_queue_player_uuid_idx " +
-                "ON delivery_offline_queue(player_uuid)"
+                "CREATE INDEX delivery_offline_queue_player_name_lower_idx " +
+                "ON delivery_offline_queue(player_name_lower)"
             );
         }
         database = Database.fromConnectionForTests(connection);
@@ -64,14 +64,14 @@ class OfflineQueueTest {
 
     @Test
     void enqueue_drainForPlayer_returns_rows_for_uuid() throws Exception {
-        queue.enqueue(101L, "uuid-a", "give Alice diamond 1");
-        queue.enqueue(102L, "uuid-a", "lp user Alice parent add vip");
-        queue.enqueue(103L, "uuid-b", "give Bob iron 5");
+        queue.enqueue("cmd-101", "uuid-a", "give Alice diamond 1");
+        queue.enqueue("cmd-102", "uuid-a", "lp user Alice parent add vip");
+        queue.enqueue("cmd-103", "uuid-b", "give Bob iron 5");
 
         List<OfflineQueue.QueuedTask> a = queue.drainForPlayer("uuid-a");
         assertThat(a).hasSize(2);
-        assertThat(a).extracting(OfflineQueue.QueuedTask::taskId)
-            .containsExactly(101L, 102L); // ordered by queued_at ASC
+        assertThat(a).extracting(OfflineQueue.QueuedTask::commandId)
+            .containsExactly("cmd-101", "cmd-102"); // ordered by queued_at ASC
 
         List<OfflineQueue.QueuedTask> b = queue.drainForPlayer("uuid-b");
         assertThat(b).hasSize(1);
@@ -80,27 +80,27 @@ class OfflineQueueTest {
 
     @Test
     void drainForPlayer_returns_empty_for_unknown_uuid() throws Exception {
-        queue.enqueue(101L, "uuid-a", "cmd");
+        queue.enqueue("cmd-101", "uuid-a", "cmd");
         assertThat(queue.drainForPlayer("never-seen")).isEmpty();
     }
 
     @Test
     void dequeue_removes_only_the_target_row() throws Exception {
-        queue.enqueue(201L, "uuid-x", "cmd-1");
-        queue.enqueue(202L, "uuid-x", "cmd-2");
-        queue.dequeue(201L);
+        queue.enqueue("cmd-201", "uuid-x", "cmd-1");
+        queue.enqueue("cmd-202", "uuid-x", "cmd-2");
+        queue.dequeue("cmd-201");
 
         List<OfflineQueue.QueuedTask> remaining = queue.drainForPlayer("uuid-x");
         assertThat(remaining).hasSize(1);
-        assertThat(remaining.get(0).taskId()).isEqualTo(202L);
+        assertThat(remaining.get(0).commandId()).isEqualTo("cmd-202");
     }
 
     @Test
-    void enqueue_is_idempotent_per_taskId() throws Exception {
-        queue.enqueue(301L, "uuid-y", "cmd-original");
+    void enqueue_is_idempotent_per_commandId() throws Exception {
+        queue.enqueue("cmd-301", "uuid-y", "cmd-original");
         // Server re-sends the same task somehow — REPLACE keeps a
         // single row, command updated to the latest version.
-        queue.enqueue(301L, "uuid-y", "cmd-updated");
+        queue.enqueue("cmd-301", "uuid-y", "cmd-updated");
         List<OfflineQueue.QueuedTask> rows = queue.drainForPlayer("uuid-y");
         assertThat(rows).hasSize(1);
         assertThat(rows.get(0).command()).isEqualTo("cmd-updated");
@@ -109,17 +109,17 @@ class OfflineQueueTest {
     @Test
     void depth_counts_total_rows_across_players() throws Exception {
         assertThat(queue.depth()).isZero();
-        queue.enqueue(401L, "u1", "c1");
-        queue.enqueue(402L, "u2", "c2");
-        queue.enqueue(403L, "u1", "c3");
+        queue.enqueue("cmd-401", "u1", "c1");
+        queue.enqueue("cmd-402", "u2", "c2");
+        queue.enqueue("cmd-403", "u1", "c3");
         assertThat(queue.depth()).isEqualTo(3);
-        queue.dequeue(401L);
+        queue.dequeue("cmd-401");
         assertThat(queue.depth()).isEqualTo(2);
     }
 
     @Test
     void persists_across_database_close_reopen() throws Exception {
-        queue.enqueue(501L, "uuid-z", "cmd-persist");
+        queue.enqueue("cmd-501", "uuid-z", "cmd-persist");
         connection.close();
 
         Path dbFile = tempDir.resolve("test.db");

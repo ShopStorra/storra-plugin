@@ -152,8 +152,12 @@ public final class StorraPlugin extends JavaPlugin {
             this
         );
 
+        // ANSI cyan — Paper's TerminalConsoleAppender renders escape
+        // codes, so the line pops in the server console alongside the
+        // usual plain-white info chatter.
         getLogger().info(
-            "Storra plugin services online (server-id=" + config.serverId() + ")."
+            "[36mStorra plugin services online (server-id="
+                + config.serverId() + ").[0m"
         );
     }
 

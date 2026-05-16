@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -62,21 +64,41 @@ public final class Database implements AutoCloseable {
             st.execute("PRAGMA journal_mode = WAL");
             st.execute("PRAGMA synchronous = NORMAL");
             st.execute("PRAGMA foreign_keys = ON");
+
+            // One-time schema migrations:
+            //   v0.x → v0.2: task_id INTEGER → command_id TEXT
+            //   v0.2 → v0.3: player_uuid → player_name_lower (the
+            //     offline queue is now keyed by lowercased player
+            //     name, since the v2 wire contract sends name not UUID)
+            // Both wipes are safe — local rows are ephemera. Storra's
+            // delivery_queue is canonical; any un-confirmed task gets
+            // re-emitted on the next /pending pull.
+            if (hasLegacyTaskIdColumn(conn, "delivery_offline_queue")
+                || hasLegacyTaskIdColumn(conn, "delivery_history")
+                || hasLegacyColumn(conn, "delivery_offline_queue", "player_uuid")) {
+                plugin.getLogger().info(
+                    "Migrating SQLite schema: dropping legacy offline-queue / history tables. " +
+                    "Pending deliveries are re-pulled from Storra on the next poll."
+                );
+                st.execute("DROP TABLE IF EXISTS delivery_offline_queue");
+                st.execute("DROP TABLE IF EXISTS delivery_history");
+            }
+
             st.execute(
                 "CREATE TABLE IF NOT EXISTS delivery_offline_queue (" +
-                "  task_id INTEGER PRIMARY KEY, " +
-                "  player_uuid TEXT NOT NULL, " +
+                "  command_id TEXT PRIMARY KEY, " +
+                "  player_name_lower TEXT NOT NULL, " +
                 "  command TEXT NOT NULL, " +
                 "  queued_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)" +
                 ")"
             );
             st.execute(
-                "CREATE INDEX IF NOT EXISTS delivery_offline_queue_player_uuid_idx " +
-                "ON delivery_offline_queue(player_uuid)"
+                "CREATE INDEX IF NOT EXISTS delivery_offline_queue_player_name_idx " +
+                "ON delivery_offline_queue(player_name_lower)"
             );
             st.execute(
                 "CREATE TABLE IF NOT EXISTS delivery_history (" +
-                "  task_id INTEGER PRIMARY KEY, " +
+                "  command_id TEXT PRIMARY KEY, " +
                 "  status TEXT NOT NULL, " +
                 "  player_name TEXT, " +
                 "  command TEXT, " +
@@ -91,6 +113,33 @@ public final class Database implements AutoCloseable {
         }
         plugin.getLogger().info("SQLite ready at " + dbPath);
         return new Database(conn);
+    }
+
+    /**
+     * Returns true if `table` exists AND still carries the legacy
+     * `task_id` column. New schemas use `command_id`. PRAGMA
+     * table_info returns zero rows for a missing table, so the call
+     * also doubles as an existence check.
+     */
+    private static boolean hasLegacyTaskIdColumn(Connection conn, String table) throws SQLException {
+        return hasLegacyColumn(conn, table, "task_id");
+    }
+
+    /**
+     * Generic table_info probe — returns true if `table` exists AND
+     * contains a column named `column`. Used as a schema-version
+     * tripwire for one-time migrations.
+     */
+    private static boolean hasLegacyColumn(Connection conn, String table, String column) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+            "SELECT 1 FROM pragma_table_info(?) WHERE name = ?"
+        )) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     public Connection connection() {

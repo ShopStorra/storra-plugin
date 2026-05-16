@@ -1,5 +1,5 @@
 name: StorraPlugin
-version: ${project.version}
+version: ${version}
 main: xyz.storra.plugin.StorraPlugin
 api-version: '1.21'
 authors: [Storra]

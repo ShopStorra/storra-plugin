@@ -13,19 +13,26 @@ import java.util.logging.Logger;
 
 /**
  * Periodic POST to /api/v1/plugin/heartbeat. Sends:
- *   - plugin_version
- *   - player_count
- *   - tps      (Paper API; first slot = 1m average)
- *   - memory_mb
- *   - cpu_percent
+ *   - version          (plugin version)
+ *   - playerCount      (Bukkit.getOnlinePlayers().size())
+ *   - maxPlayers       (Bukkit.getMaxPlayers())
+ *   - tps              (Paper getServer().getTPS()[0] — 1m average)
+ *   - mspt             (Paper getServer().getAverageTickTime() — ms)
+ *   - memoryUsedMb     (Runtime — heap used)
+ *   - memoryMaxMb      (Runtime — heap cap)
+ *   - cpuPercent       (com.sun.management OS bean, 0-100)
+ *   - entityCount      (sum across all loaded worlds)
+ *   - chunkCount       (sum across all loaded worlds)
  *
- * Storra's dashboard game-servers page uses these values to
- * render online/offline + diagnostic cards.
+ * Field names are camelCase to match the server's handleHeartbeat
+ * contract. v1 was snake_case and silently dropped everything
+ * except `tps` which happened to match by accident — hence the
+ * dashboard showing "—" for every stat post-retrofit.
  *
- * Implementation note: TPS is read via Paper's getServer().getTPS().
- * On Spigot the same call returns null and we fall back to a
- * sentinel of 20.0 (full-rate). Plugin requires Paper 1.21+ per
- * plugin.yml so the fallback is just defense-in-depth.
+ * Implementation note: TPS / MSPT are read via Paper API. On
+ * Spigot the same calls return null/throw and we fall back to
+ * sentinels (20.0 / 0.0). Plugin requires Paper 1.21+ per
+ * plugin.yml so the fallback is defense-in-depth.
  */
 public final class HeartbeatService {
 
@@ -50,14 +57,39 @@ public final class HeartbeatService {
 
     public void start() {
         long ticks = Math.max(20, interval.toSeconds() * 20L);
+        // Three-stage scheduling per cycle:
+        //   1. Async timer fires (we're now on an async thread)
+        //   2. Hop to main thread to read world state (entities,
+        //      loaded chunks) — Bukkit's AsyncCatcher trips otherwise
+        //      and World.getEntities() throws on Paper/Purpur
+        //   3. Hop back to async to compose the stats payload and
+        //      run the HTTP POST
         task = new BukkitRunnable() {
             @Override
             public void run() {
-                try {
-                    api.heartbeat(snapshot());
-                } catch (Exception ex) {
-                    log.warning("Heartbeat failed: " + ex.getMessage());
-                }
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    int entities = 0;
+                    int chunks = 0;
+                    try {
+                        for (org.bukkit.World w : Bukkit.getWorlds()) {
+                            entities += w.getEntities().size();
+                            chunks += w.getLoadedChunks().length;
+                        }
+                    } catch (Throwable t) {
+                        // Best-effort — counts default to 0 if world
+                        // iteration trips somehow. Heartbeat still
+                        // fires with the other fields populated.
+                    }
+                    final int finalEntities = entities;
+                    final int finalChunks = chunks;
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                        try {
+                            api.heartbeat(snapshot(finalEntities, finalChunks));
+                        } catch (Exception ex) {
+                            log.warning("Heartbeat failed: " + ex.getMessage());
+                        }
+                    });
+                });
             }
         }.runTaskTimerAsynchronously(plugin, ticks, ticks);
     }
@@ -69,15 +101,24 @@ public final class HeartbeatService {
         }
     }
 
-    private StorraApiClient.HeartbeatStats snapshot() {
+    /**
+     * Compose the heartbeat payload. Entity + chunk counts are
+     * passed in by the caller because they must be read on the
+     * main thread; everything else here is async-safe (online-
+     * player count, server TPS/MSPT, JVM memory + CPU).
+     */
+    private StorraApiClient.HeartbeatStats snapshot(int entities, int chunks) {
         int players = Bukkit.getOnlinePlayers().size();
+        int maxPlayers = Bukkit.getMaxPlayers();
 
         double tps = 20.0;
+        double mspt = 0.0;
         try {
             double[] paperTps = Bukkit.getServer().getTPS();
             if (paperTps != null && paperTps.length > 0) {
                 tps = Math.min(20.0, paperTps[0]);
             }
+            mspt = Bukkit.getServer().getAverageTickTime();
         } catch (Throwable ignored) {
             // Spigot fallback. Plugin officially requires Paper, so
             // this branch only fires if a merchant runs against an
@@ -86,7 +127,11 @@ public final class HeartbeatService {
 
         Runtime rt = Runtime.getRuntime();
         long usedBytes = rt.totalMemory() - rt.freeMemory();
-        long memMb = usedBytes / (1024L * 1024L);
+        long memUsedMb = usedBytes / (1024L * 1024L);
+        // maxMemory may return Long.MAX_VALUE if the JVM has no cap;
+        // treat that as "unknown" via 0 so the dashboard shows —.
+        long maxBytes = rt.maxMemory();
+        long memMaxMb = maxBytes == Long.MAX_VALUE ? 0L : maxBytes / (1024L * 1024L);
 
         double cpu = -1.0;
         try {
@@ -102,9 +147,14 @@ public final class HeartbeatService {
         return new StorraApiClient.HeartbeatStats(
             pluginVersion,
             players,
+            maxPlayers,
             tps,
-            memMb,
-            cpu
+            mspt,
+            memUsedMb,
+            memMaxMb,
+            cpu,
+            entities,
+            chunks
         );
     }
 }

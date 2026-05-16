@@ -14,15 +14,15 @@ import java.util.List;
  *
  * Workflow:
  *   1. DeliveryManager pulls a task with `requireOnline=true` and
- *      the target player isn't in `Bukkit.getOnlinePlayers()`.
- *   2. enqueue() writes a row keyed on (player_uuid, task_id).
- *   3. PlayerJoinListener (ticket 7) calls drainForPlayer() on
- *      PlayerJoinEvent and DeliveryManager runs the rows.
+ *      Bukkit.getPlayerExact(name) returns null.
+ *   2. enqueue() writes a row keyed on (player_name_lower, command_id).
+ *   3. PlayerJoinListener calls drainForPlayer() on PlayerJoinEvent
+ *      with the joining player's lowercased name; DeliveryManager
+ *      then runs the rows.
  *   4. dequeue() removes the row once the command runs.
  *
- * SQLite primary key is task_id (server-side unique). Index on
- * player_uuid for the join-event lookup. Schema is created in
- * Database.open().
+ * Primary key is command_id (server-side UUID, globally unique).
+ * Lookup index is on player_name_lower for the join-event drain.
  */
 public final class OfflineQueue {
 
@@ -32,32 +32,32 @@ public final class OfflineQueue {
         this.database = database;
     }
 
-    public void enqueue(long taskId, String playerUuid, String command) throws SQLException {
+    public void enqueue(String commandId, String playerNameLower, String command) throws SQLException {
         Connection conn = database.connection();
         try (PreparedStatement st = conn.prepareStatement(
             "INSERT OR REPLACE INTO delivery_offline_queue " +
-            "(task_id, player_uuid, command) VALUES (?, ?, ?)"
+            "(command_id, player_name_lower, command) VALUES (?, ?, ?)"
         )) {
-            st.setLong(1, taskId);
-            st.setString(2, playerUuid);
+            st.setString(1, commandId);
+            st.setString(2, playerNameLower);
             st.setString(3, command);
             st.executeUpdate();
         }
     }
 
-    public List<QueuedTask> drainForPlayer(String playerUuid) throws SQLException {
+    public List<QueuedTask> drainForPlayer(String playerNameLower) throws SQLException {
         Connection conn = database.connection();
         List<QueuedTask> rows = new ArrayList<>();
         try (PreparedStatement st = conn.prepareStatement(
-            "SELECT task_id, player_uuid, command FROM delivery_offline_queue " +
-            "WHERE player_uuid = ? ORDER BY queued_at ASC"
+            "SELECT command_id, player_name_lower, command FROM delivery_offline_queue " +
+            "WHERE player_name_lower = ? ORDER BY queued_at ASC"
         )) {
-            st.setString(1, playerUuid);
+            st.setString(1, playerNameLower);
             try (ResultSet rs = st.executeQuery()) {
                 while (rs.next()) {
                     rows.add(new QueuedTask(
-                        rs.getLong("task_id"),
-                        rs.getString("player_uuid"),
+                        rs.getString("command_id"),
+                        rs.getString("player_name_lower"),
                         rs.getString("command")
                     ));
                 }
@@ -66,12 +66,12 @@ public final class OfflineQueue {
         return rows;
     }
 
-    public void dequeue(long taskId) throws SQLException {
+    public void dequeue(String commandId) throws SQLException {
         Connection conn = database.connection();
         try (PreparedStatement st = conn.prepareStatement(
-            "DELETE FROM delivery_offline_queue WHERE task_id = ?"
+            "DELETE FROM delivery_offline_queue WHERE command_id = ?"
         )) {
-            st.setLong(1, taskId);
+            st.setString(1, commandId);
             st.executeUpdate();
         }
     }
@@ -85,5 +85,5 @@ public final class OfflineQueue {
         }
     }
 
-    public record QueuedTask(long taskId, String playerUuid, String command) {}
+    public record QueuedTask(String commandId, String playerNameLower, String command) {}
 }

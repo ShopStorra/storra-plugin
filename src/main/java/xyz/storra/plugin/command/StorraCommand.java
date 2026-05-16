@@ -156,8 +156,13 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
             for (var r : rows) {
                 String marker = "delivered".equals(r.status()) ? "✔" : "✖";
                 String reason = r.reason() == null ? "" : " — " + r.reason();
+                // command_id is a UUID — take the first 8 chars so the
+                // history line stays scannable in the chat / console.
+                String shortId = r.commandId() == null
+                    ? "?"
+                    : r.commandId().substring(0, Math.min(8, r.commandId().length()));
                 sender.sendMessage(
-                    "  " + marker + " #" + r.taskId() +
+                    "  " + marker + " #" + shortId +
                     " " + (r.playerName() == null ? "?" : r.playerName()) +
                     " · " + (r.command() == null ? "" : r.command()) +
                     reason

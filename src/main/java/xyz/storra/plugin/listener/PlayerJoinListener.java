@@ -32,11 +32,14 @@ public final class PlayerJoinListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onJoin(PlayerJoinEvent event) {
-        String uuid = event.getPlayer().getUniqueId().toString();
+        // Lowercased to match how DeliveryManager.enqueueOffline keys
+        // the row — Bukkit usernames are case-insensitive for lookup
+        // but case-preserving for display.
+        String name = event.getPlayer().getName().toLowerCase();
         new BukkitRunnable() {
             @Override
             public void run() {
-                deliveryManager.deliverQueuedFor(uuid);
+                deliveryManager.deliverQueuedFor(name);
             }
         }.runTaskAsynchronously(plugin);
     }

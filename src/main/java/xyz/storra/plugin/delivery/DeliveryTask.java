@@ -6,40 +6,35 @@ import com.google.gson.annotations.SerializedName;
  * One unit of work pulled from `/api/v1/plugin/pending`. Mirrors
  * the JSON shape Storra's `delivery_queue` row serializes to.
  *
- * Serialized field names follow the Storra-side snake_case schema;
- * Java fields stay camelCase via @SerializedName so the rest of
- * the plugin reads naturally.
+ * v2 wire contract (matches `src/routes/api/v1/plugin/$.ts`):
+ *   {
+ *     "id":            "<uuid>",
+ *     "command":       "<bukkit command string>",
+ *     "playerName":    "<in-game name>"  | null,
+ *     "requireOnline": true | false
+ *   }
  *
- * The `requireOnline` flag tells DeliveryManager whether a missing
- * player should defer the task to the offline queue (deliver when
- * they next join) or fail immediately.
+ * When requireOnline is true (Tebex parity default), the
+ * DeliveryManager defers dispatch until `playerName` is online
+ * (Bukkit.getPlayerExact). When false, the command fires
+ * immediately as console — for broadcasts / console-only commands.
  */
 public final class DeliveryTask {
 
-    @SerializedName("task_id")
-    private long taskId;
-
-    @SerializedName("product_id")
-    private String productId;
+    @SerializedName("id")
+    private String commandId;
 
     @SerializedName("command")
     private String command;
 
-    @SerializedName("player_name")
+    @SerializedName("playerName")
     private String playerName;
 
-    @SerializedName("player_uuid")
-    private String playerUuid;
-
-    @SerializedName("require_online")
+    @SerializedName("requireOnline")
     private boolean requireOnline;
 
-    public long taskId() {
-        return taskId;
-    }
-
-    public String productId() {
-        return productId;
+    public String commandId() {
+        return commandId;
     }
 
     public String command() {
@@ -48,10 +43,6 @@ public final class DeliveryTask {
 
     public String playerName() {
         return playerName;
-    }
-
-    public String playerUuid() {
-        return playerUuid;
     }
 
     public boolean requireOnline() {

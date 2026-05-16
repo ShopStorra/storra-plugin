@@ -1,13 +1,11 @@
 package xyz.storra.plugin.delivery;
 
 import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.command.ConsoleCommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import xyz.storra.plugin.api.StorraApiClient;
 
-import java.util.UUID;
 import java.util.logging.Logger;
 
 /**
@@ -56,26 +54,53 @@ public final class DeliveryManager {
     /**
      * Deliver one task. Called from PollService's async loop;
      * re-enters the main thread for Bukkit calls.
+     *
+     * Three paths:
+     *   1. requireOnline=false: dispatch immediately as console.
+     *      For broadcasts / console-only commands.
+     *   2. requireOnline=true + player online: dispatch immediately,
+     *      confirm to Storra.
+     *   3. requireOnline=true + player offline: enqueue in local
+     *      SQLite OfflineQueue. PlayerJoinListener drains on join.
+     *      Storra is NOT confirmed yet — the row stays pending in
+     *      delivery_queue so /pending re-emits it if the plugin
+     *      restarts (RecoveryService picks it up).
      */
     public void deliver(DeliveryTask task) {
-        if (task.requireOnline() && !isOnline(task.playerUuid())) {
-            enqueueOffline(task);
+        if (!task.requireOnline()) {
+            runOnMain(() -> executeAndReport(task));
             return;
         }
-        runOnMain(() -> executeAndReport(task));
+        String name = task.playerName();
+        if (name == null || name.isEmpty()) {
+            // Server contract bug: requireOnline=true with no name to
+            // wait on. Don't loop forever — log + dispatch immediately.
+            log.warning(
+                "Task " + task.commandId() + " has requireOnline=true but no playerName; dispatching anyway"
+            );
+            runOnMain(() -> executeAndReport(task));
+            return;
+        }
+        // Bukkit.getPlayerExact is sync + lock-free; checks the live
+        // online-player list only. Cheap from any thread.
+        if (Bukkit.getPlayerExact(name) != null) {
+            runOnMain(() -> executeAndReport(task));
+            return;
+        }
+        enqueueOffline(task);
     }
 
     /** Drain everything queued for a player who just joined. */
-    public void deliverQueuedFor(String playerUuid) {
+    public void deliverQueuedFor(String playerName) {
         try {
-            for (OfflineQueue.QueuedTask q : offlineQueue.drainForPlayer(playerUuid)) {
+            for (OfflineQueue.QueuedTask q : offlineQueue.drainForPlayer(playerName)) {
                 runOnMain(() -> {
                     boolean ok = dispatchCommand(q.command());
-                    asyncReport(q.taskId(), ok ? null : "dispatch failed");
+                    asyncReport(q.commandId(), ok ? null : "dispatch failed");
                     try {
-                        offlineQueue.dequeue(q.taskId());
+                        offlineQueue.dequeue(q.commandId());
                     } catch (Exception ex) {
-                        log.warning("dequeue failed for task " + q.taskId() + ": " + ex.getMessage());
+                        log.warning("dequeue failed for task " + q.commandId() + ": " + ex.getMessage());
                     }
                 });
             }
@@ -88,12 +113,23 @@ public final class DeliveryManager {
 
     private void enqueueOffline(DeliveryTask task) {
         try {
-            offlineQueue.enqueue(task.taskId(), task.playerUuid(), task.command());
-            log.info(
-                "Player " + task.playerName() + " offline; queued task " + task.taskId()
+            // Lowercased key so the join lookup matches regardless of
+            // how the buyer cased their username at checkout.
+            offlineQueue.enqueue(
+                task.commandId(),
+                task.playerName().toLowerCase(),
+                task.command()
             );
+            log.info(
+                "Player " + task.playerName() + " offline; queued task " + task.commandId()
+            );
+            // IMPORTANT: don't confirm to Storra yet. The
+            // delivery_queue row stays in 'pending' so a plugin
+            // restart re-pulls it from /pending and the offline
+            // queue resyncs from the source of truth. Confirmation
+            // fires when the player joins and the command dispatches.
         } catch (Exception ex) {
-            log.warning("Failed to enqueue offline task " + task.taskId() + ": " + ex.getMessage());
+            log.warning("Failed to enqueue offline task " + task.commandId() + ": " + ex.getMessage());
             // Surface back to Storra so it can retry later — the task
             // is at risk of being lost otherwise.
             asyncReport(task, "offline queue write failed: " + ex.getMessage());
@@ -131,40 +167,27 @@ public final class DeliveryManager {
     }
 
     private void asyncReport(DeliveryTask task, String failReason) {
-        asyncReport(task.taskId(), failReason);
+        asyncReport(task.commandId(), failReason);
     }
 
-    private void asyncReport(long taskId, String failReason) {
+    private void asyncReport(String commandId, String failReason) {
         runAsync(() -> {
             try {
                 if (failReason == null) {
-                    api.confirm(taskId);
+                    api.confirm(commandId);
                 } else {
-                    api.fail(taskId, failReason);
+                    api.fail(commandId, failReason);
                 }
             } catch (Exception ex) {
                 // Network failure — task stays in Storra's pending
                 // queue and the next poll cycle re-attempts.
                 log.warning(
-                    "Failed to report task " + taskId + " (" +
+                    "Failed to report task " + commandId + " (" +
                     (failReason == null ? "confirm" : "fail") +
                     "): " + ex.getMessage()
                 );
             }
         });
-    }
-
-    private boolean isOnline(String playerUuidStr) {
-        try {
-            UUID uuid = UUID.fromString(playerUuidStr);
-            OfflinePlayer p = Bukkit.getOfflinePlayer(uuid);
-            return p.isOnline();
-        } catch (IllegalArgumentException ex) {
-            // Malformed UUID from the server — treat as offline so
-            // the task lands in the queue rather than dispatching
-            // with bogus data.
-            return false;
-        }
     }
 
     private void runOnMain(Runnable task) {
