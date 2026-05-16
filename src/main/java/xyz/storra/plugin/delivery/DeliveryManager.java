@@ -2,6 +2,8 @@ package xyz.storra.plugin.delivery;
 
 import org.bukkit.Bukkit;
 import org.bukkit.command.ConsoleCommandSender;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import xyz.storra.plugin.api.StorraApiClient;
@@ -153,6 +155,36 @@ public final class DeliveryManager {
     }
 
     private void executeAndReport(DeliveryTask task) {
+        // Inventory-full guard. Only fires when the merchant set
+        // requiredSlots > 0 on the deliverable AND we have a target
+        // player. Rank changes, currency grants, broadcasts (slots=0)
+        // skip this entirely and dispatch unconditionally.
+        if (task.requiredSlots() > 0 && task.playerName() != null) {
+            Player player = Bukkit.getPlayerExact(task.playerName());
+            if (player != null) {
+                int free = countFreeInventorySlots(player);
+                if (free < task.requiredSlots()) {
+                    String reason = "inventory_full (need "
+                        + task.requiredSlots() + ", have " + free + ")";
+                    log.info(
+                        "Deferring task " + task.commandId() + " for "
+                        + task.playerName() + ": " + reason
+                    );
+                    try {
+                        history.recordFailed(task, reason);
+                    } catch (Exception ignored) {
+                    }
+                    asyncReport(task, reason);
+                    return;
+                }
+            }
+            // If player is null here we fall through to dispatch — the
+            // requireOnline=true path already handled the offline case
+            // before reaching executeAndReport, so a null here means
+            // the merchant left requireOnline=false and there's no
+            // player to inspect; running the command is the right call.
+        }
+
         boolean dispatched = dispatchCommand(task.command());
         if (dispatched) {
             try {
@@ -180,6 +212,23 @@ public final class DeliveryManager {
             }
             asyncReport(task, "Bukkit dispatch returned false");
         }
+    }
+
+    /**
+     * Count empty inventory slots for a player. Looks only at the
+     * 36 main storage slots (hotbar + main inventory) — armor and
+     * off-hand intentionally excluded since /give targets storage.
+     * Slots holding air or null both count as empty.
+     */
+    static int countFreeInventorySlots(Player player) {
+        ItemStack[] contents = player.getInventory().getStorageContents();
+        int free = 0;
+        for (ItemStack stack : contents) {
+            if (stack == null || stack.getType().isAir()) {
+                free++;
+            }
+        }
+        return free;
     }
 
     /** Returns true on Bukkit success. Catches throw — Bukkit can

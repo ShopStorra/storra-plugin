@@ -11,7 +11,8 @@ import com.google.gson.annotations.SerializedName;
  *     "id":            "<uuid>",
  *     "command":       "<bukkit command string>",
  *     "playerName":    "<in-game name>"  | null,
- *     "requireOnline": true | false
+ *     "requireOnline": true | false,
+ *     "requiredSlots": <integer, 0 = no check>
  *   }
  *
  * When requireOnline is true (Tebex parity default), the
@@ -33,6 +34,9 @@ public final class DeliveryTask {
     @SerializedName("requireOnline")
     private boolean requireOnline;
 
+    @SerializedName("requiredSlots")
+    private int requiredSlots;
+
     @SerializedName("productName")
     private String productName;
 
@@ -50,6 +54,10 @@ public final class DeliveryTask {
 
     public boolean requireOnline() {
         return requireOnline;
+    }
+
+    public int requiredSlots() {
+        return requiredSlots;
     }
 
     public String productName() {
