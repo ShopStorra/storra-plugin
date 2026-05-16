@@ -659,7 +659,16 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
             if (i > from) sb.append(' ');
             sb.append(args[i]);
         }
-        return sb.toString();
+        String joined = sb.toString();
+        // Strip surrounding ASCII double quotes so quoted tab-complete
+        // suggestions (used for package names with spaces) still
+        // resolve correctly against the server's exact-name match.
+        if (joined.length() >= 2
+            && joined.charAt(0) == '"'
+            && joined.charAt(joined.length() - 1) == '"') {
+            return joined.substring(1, joined.length() - 1);
+        }
+        return joined;
     }
 
     private void sendUsage(CommandSender sender) {
@@ -744,6 +753,61 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 .filter(n -> n.toLowerCase().startsWith(partial))
                 .toList();
         }
+        // /storra checkout <package> → suggest active package names
+        // from the runtime cache. Cache populated lazily by
+        // suggestPackageNames so the first tab-press kicks off the
+        // async fetch and the second press (after ~ms) sees results.
+        if (args.length == 2 && args[0].equalsIgnoreCase("checkout")) {
+            return suggestPackageNames(args[1]);
+        }
+        // /storra sendlink <player> <package> — package slot is the
+        // third arg here, not the second (online players occupy slot 2
+        // per the block above).
+        if (args.length == 3 && args[0].equalsIgnoreCase("sendlink")) {
+            return suggestPackageNames(args[2]);
+        }
         return Collections.emptyList();
+    }
+
+    /**
+     * Pull package-name suggestions from the runtime cache. Returns
+     * the cached list when fresh; on miss, kicks off an async fetch
+     * and returns an empty list — the next tab-press will see results
+     * once the network round-trip lands (typically <100ms). Never
+     * blocks the tab-complete thread on network I/O.
+     */
+    private List<String> suggestPackageNames(String partial) {
+        StorraApiClient api = plugin.getApi();
+        if (api == null) return Collections.emptyList();
+        xyz.storra.plugin.service.RuntimeState state = plugin.getRuntimeState();
+
+        java.util.List<StorraApiClient.PackageRow> cached = state.packagesCached();
+        if (cached == null) {
+            // Miss — kick off the fetch and return empty so the
+            // suggestion menu doesn't show stale junk while waiting.
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                try {
+                    StorraApiClient.PackagesListResult res = api.packagesList();
+                    if (res.ok()) {
+                        state.setPackages(res.packages());
+                    }
+                } catch (Exception ignored) {
+                    // Best-effort; next tab press retries.
+                }
+            });
+            return Collections.emptyList();
+        }
+        String p = partial.toLowerCase();
+        return cached.stream()
+            .map(StorraApiClient.PackageRow::name)
+            .filter(n -> n != null && n.toLowerCase().contains(p))
+            // Bukkit's tab-complete doesn't handle suggestions with
+            // spaces gracefully — multi-word names get truncated at
+            // the first space. Wrap them in quotes so the chat input
+            // treats the whole suggestion as one token. The handler's
+            // joinArgs already collapses multi-arg input back into one
+            // ref, so a quoted name still resolves correctly.
+            .map(n -> n.contains(" ") ? "\"" + n + "\"" : n)
+            .toList();
     }
 }

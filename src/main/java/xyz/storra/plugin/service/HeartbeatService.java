@@ -113,7 +113,16 @@ public final class HeartbeatService {
      * new jar to clear it.
      */
     private void handleHeartbeatResponse(StorraApiClient.HeartbeatResponse resp) {
-        if (!resp.ok() || updateNoticeLogged) return;
+        if (!resp.ok()) return;
+        // Cache the server-resolved storefront URL into runtime
+        // state so /buy + /store alias listener can fall back to it
+        // when the merchant hasn't pasted aliases.store-url into
+        // config.yml. Each heartbeat tick refreshes — picks up the
+        // merchant toggling a custom domain mid-session.
+        if (plugin instanceof xyz.storra.plugin.StorraPlugin storra) {
+            storra.getRuntimeState().setStorefront(resp.storeUrl(), resp.storeName());
+        }
+        if (updateNoticeLogged) return;
         if (resp.updateAvailable() && resp.latestVersion() != null) {
             updateNoticeLogged = true;
             log.warning(

@@ -162,10 +162,12 @@ public final class StorraApiClient {
     public record HeartbeatResponse(
         boolean ok,
         String latestVersion,
-        boolean updateAvailable
+        boolean updateAvailable,
+        String storeUrl,
+        String storeName
     ) {
         public static HeartbeatResponse failed() {
-            return new HeartbeatResponse(false, null, false);
+            return new HeartbeatResponse(false, null, false, null, null);
         }
     }
 
@@ -218,6 +220,8 @@ public final class StorraApiClient {
         Boolean ok;
         String latestVersion;
         Boolean updateAvailable;
+        String storeUrl;
+        String storeName;
     }
 
     /**
@@ -335,6 +339,48 @@ public final class StorraApiClient {
             );
         } catch (Exception ex) {
             return PlayerStatsResult.failed(username, "parse failed: " + ex.getMessage());
+        }
+    }
+
+    // ── Packages list (tab-complete for /storra checkout + sendlink) ─
+
+    public record PackageRow(String id, String slug, String name) {}
+
+    public record PackagesListResult(java.util.List<PackageRow> packages, String error) {
+        public boolean ok() { return error == null; }
+    }
+
+    private static final class PackagesListRaw {
+        java.util.List<PackageRow> packages;
+        String error;
+    }
+
+    /**
+     * POST /api/v1/plugin/packages — active packages for tab-complete.
+     * Plugin caches the result for ~60s so a typing burst doesn't
+     * blast the API; cache misses fall back to no suggestions
+     * rather than blocking the chat input on a network round-trip.
+     */
+    public PackagesListResult packagesList() throws IOException, InterruptedException {
+        HttpResponse<String> res = signedSend("/api/v1/plugin/packages", "POST", EMPTY_BODY);
+        if (res.statusCode() != 200) {
+            String responseBody = res.body() == null ? "" : res.body();
+            logNonOk("packages", res.statusCode(), responseBody);
+            return new PackagesListResult(java.util.List.of(),
+                "HTTP " + res.statusCode() + " — " + responseBody);
+        }
+        try {
+            PackagesListRaw parsed = GSON.fromJson(res.body(), PackagesListRaw.class);
+            if (parsed == null) {
+                return new PackagesListResult(java.util.List.of(), "malformed response");
+            }
+            return new PackagesListResult(
+                parsed.packages == null ? java.util.List.of() : parsed.packages,
+                null
+            );
+        } catch (Exception ex) {
+            return new PackagesListResult(java.util.List.of(),
+                "parse failed: " + ex.getMessage());
         }
     }
 
@@ -579,11 +625,13 @@ public final class StorraApiClient {
             return new HeartbeatResponse(
                 parsed.ok != null && parsed.ok,
                 parsed.latestVersion,
-                parsed.updateAvailable != null && parsed.updateAvailable
+                parsed.updateAvailable != null && parsed.updateAvailable,
+                parsed.storeUrl,
+                parsed.storeName
             );
         } catch (Exception ex) {
             // Malformed but 200 — count as soft success, no update info.
-            return new HeartbeatResponse(true, null, false);
+            return new HeartbeatResponse(true, null, false, null, null);
         }
     }
 

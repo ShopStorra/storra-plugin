@@ -42,6 +42,8 @@ public final class StorraPlugin extends JavaPlugin {
     private DeliveryManager deliveryManager;
     private StorraApiClient api;
     private xyz.storra.plugin.papi.StorraExpansion papiExpansion;
+    private final xyz.storra.plugin.service.RuntimeState runtimeState =
+        new xyz.storra.plugin.service.RuntimeState();
 
     @Override
     public void onEnable() {
@@ -132,6 +134,15 @@ public final class StorraPlugin extends JavaPlugin {
      */
     public StorraApiClient getApi() {
         return api;
+    }
+
+    /**
+     * In-memory runtime cache shared between HeartbeatService (writes
+     * storefront URL on every successful tick) + listeners + admin
+     * commands (read for tab-complete + alias fallback).
+     */
+    public xyz.storra.plugin.service.RuntimeState getRuntimeState() {
+        return runtimeState;
     }
 
     /**
@@ -226,6 +237,11 @@ public final class StorraPlugin extends JavaPlugin {
             heartbeatService.stop();
             heartbeatService = null;
         }
+        // Cached runtime state belongs to a single (tenant, server-id)
+        // pairing. A reload that re-pairs to a different tenant must
+        // start fresh — otherwise the previous tenant's storefront URL
+        // would leak into the new pairing's /buy chat link.
+        runtimeState.clear();
         if (papiExpansion != null) {
             try {
                 papiExpansion.unregister();

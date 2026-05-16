@@ -40,8 +40,18 @@ public final class StoreAliasListener implements Listener {
         // Plugin reads config live (not snapshotted at boot) so a
         // /storra reload after editing config.yml takes effect for
         // the next player command without bouncing services.
-        PluginConfig config = ((xyz.storra.plugin.StorraPlugin) plugin).getPluginConfig();
+        xyz.storra.plugin.StorraPlugin storra =
+            (xyz.storra.plugin.StorraPlugin) plugin;
+        PluginConfig config = storra.getPluginConfig();
+        // Config-supplied URL wins (lets merchants override per-server
+        // when running multi-server setups); fall back to the URL the
+        // heartbeat learned from the server. This means merchants on
+        // a fresh install with a paired tenant get /buy working
+        // automatically — no manual config.yml edit required.
         String url = config.storeUrl();
+        if (url == null || url.isEmpty()) {
+            url = storra.getRuntimeState().storeUrl();
+        }
         if (url == null || url.isEmpty()) return;
 
         // PlayerCommandPreprocessEvent.getMessage() includes the
