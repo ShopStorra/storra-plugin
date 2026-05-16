@@ -25,6 +25,9 @@ public final class PluginConfig {
     private final String databaseFile;
     private final int historyRetention;
     private final boolean debug;
+    private final String storeUrl;
+    private final boolean interceptBuy;
+    private final boolean interceptStore;
 
     private PluginConfig(
         String baseUrl,
@@ -35,7 +38,10 @@ public final class PluginConfig {
         int commandExecuteParallelism,
         String databaseFile,
         int historyRetention,
-        boolean debug
+        boolean debug,
+        String storeUrl,
+        boolean interceptBuy,
+        boolean interceptStore
     ) {
         this.baseUrl = baseUrl;
         this.serverId = serverId;
@@ -46,6 +52,9 @@ public final class PluginConfig {
         this.databaseFile = databaseFile;
         this.historyRetention = historyRetention;
         this.debug = debug;
+        this.storeUrl = storeUrl;
+        this.interceptBuy = interceptBuy;
+        this.interceptStore = interceptStore;
     }
 
     public static PluginConfig load(JavaPlugin plugin) {
@@ -59,7 +68,10 @@ public final class PluginConfig {
             cfg.getInt("polling.command-execute-parallelism", 4),
             cfg.getString("persistence.database-file", "storra.db"),
             cfg.getInt("persistence.history-retention", 100),
-            cfg.getBoolean("debug.enabled", false)
+            cfg.getBoolean("debug.enabled", false),
+            cfg.getString("aliases.store-url", ""),
+            cfg.getBoolean("aliases.intercept-buy", true),
+            cfg.getBoolean("aliases.intercept-store", true)
         );
     }
 
@@ -116,5 +128,17 @@ public final class PluginConfig {
 
     public boolean isDebugEnabled() {
         return debug;
+    }
+
+    public String storeUrl() {
+        return storeUrl;
+    }
+
+    public boolean interceptBuy() {
+        return interceptBuy;
+    }
+
+    public boolean interceptStore() {
+        return interceptStore;
     }
 }

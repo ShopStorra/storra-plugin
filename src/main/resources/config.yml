@@ -68,5 +68,22 @@ receipt:
   particle: "TOTEM_OF_UNDYING"
   particle-count: 50
 
+# In-game command aliases. Tebex parity — players type /buy or
+# /store and the plugin replies with a clickable storefront link.
+# Intercepts run BEFORE other plugins (priority LOW), so if you
+# already have a /buy plugin you trust, set the matching alias to
+# false here to let your other plugin handle it.
+aliases:
+  # Storefront URL the alias points to. Required for /buy and
+  # /store interception — leave blank to disable both. Should
+  # match your tenant's public storefront (Dashboard → Storefront
+  # → URL).
+  store-url: ""
+
+  # Set true to intercept the typed command and reply with a
+  # clickable storefront link. False to defer to other plugins.
+  intercept-buy: true
+  intercept-store: true
+
 debug:
   enabled: false

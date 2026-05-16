@@ -67,6 +67,15 @@ public final class StorraPlugin extends JavaPlugin {
             getCommand("storra").setTabCompleter(command);
         }
 
+        // /buy + /store alias interception — runs whether the plugin
+        // is paired or not (it's a static chat-link reply, no API
+        // dependency). Listener reads config live so /storra reload
+        // picks up toggle changes immediately.
+        getServer().getPluginManager().registerEvents(
+            new xyz.storra.plugin.listener.StoreAliasListener(this),
+            this
+        );
+
         if (!config.isPaired()) {
             getLogger().warning(
                 "Storra plugin loaded but not paired. Run `/storra pair <code>` " +
