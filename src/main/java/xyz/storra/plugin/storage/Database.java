@@ -70,12 +70,18 @@ public final class Database implements AutoCloseable {
             //   v0.2 → v0.3: player_uuid → player_name_lower (the
             //     offline queue is now keyed by lowercased player
             //     name, since the v2 wire contract sends name not UUID)
-            // Both wipes are safe — local rows are ephemera. Storra's
+            //   v0.3 → v0.4: add product_name so the delivery
+            //     receipt can name the package on drain.
+            // All wipes are safe — local rows are ephemera. Storra's
             // delivery_queue is canonical; any un-confirmed task gets
             // re-emitted on the next /pending pull.
-            if (hasLegacyTaskIdColumn(conn, "delivery_offline_queue")
+            boolean needsMigration =
+                hasLegacyTaskIdColumn(conn, "delivery_offline_queue")
                 || hasLegacyTaskIdColumn(conn, "delivery_history")
-                || hasLegacyColumn(conn, "delivery_offline_queue", "player_uuid")) {
+                || hasLegacyColumn(conn, "delivery_offline_queue", "player_uuid")
+                || (tableExists(conn, "delivery_offline_queue")
+                    && !hasLegacyColumn(conn, "delivery_offline_queue", "product_name"));
+            if (needsMigration) {
                 plugin.getLogger().info(
                     "Migrating SQLite schema: dropping legacy offline-queue / history tables. " +
                     "Pending deliveries are re-pulled from Storra on the next poll."
@@ -89,6 +95,7 @@ public final class Database implements AutoCloseable {
                 "  command_id TEXT PRIMARY KEY, " +
                 "  player_name_lower TEXT NOT NULL, " +
                 "  command TEXT NOT NULL, " +
+                "  product_name TEXT, " +
                 "  queued_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)" +
                 ")"
             );
@@ -136,6 +143,23 @@ public final class Database implements AutoCloseable {
         )) {
             ps.setString(1, table);
             ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /**
+     * True if `table` exists in the database. Lets us distinguish
+     * "fresh install, no migration needed" from "old schema needs
+     * dropping" — both return false for `hasLegacyColumn(new-col)`
+     * but only the latter should trigger DROP+CREATE.
+     */
+    private static boolean tableExists(Connection conn, String table) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+        )) {
+            ps.setString(1, table);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }

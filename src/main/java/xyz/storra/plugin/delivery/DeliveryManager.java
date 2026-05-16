@@ -96,6 +96,21 @@ public final class DeliveryManager {
             for (OfflineQueue.QueuedTask q : offlineQueue.drainForPlayer(playerName)) {
                 runOnMain(() -> {
                     boolean ok = dispatchCommand(q.command());
+                    if (ok) {
+                        // Fire the receipt for the queued-then-drained
+                        // delivery — same UX as a live online dispatch.
+                        // Reconstruct a minimal DeliveryTask for the
+                        // receipt helper (it only needs productName +
+                        // playerName).
+                        try {
+                            DeliveryTask reconstructed = DeliveryTask.forReceipt(
+                                q.commandId(), playerName, q.productName()
+                            );
+                            DeliveryReceipt.fire(plugin, playerName, reconstructed);
+                        } catch (Throwable t) {
+                            log.warning("Delivery receipt failed: " + t.getMessage());
+                        }
+                    }
                     asyncReport(q.commandId(), ok ? null : "dispatch failed");
                     try {
                         offlineQueue.dequeue(q.commandId());
@@ -118,7 +133,8 @@ public final class DeliveryManager {
             offlineQueue.enqueue(
                 task.commandId(),
                 task.playerName().toLowerCase(),
-                task.command()
+                task.command(),
+                task.productName()
             );
             log.info(
                 "Player " + task.playerName() + " offline; queued task " + task.commandId()
@@ -143,6 +159,18 @@ public final class DeliveryManager {
                 history.recordDelivered(task);
             } catch (Exception ignored) {
                 // History is best-effort — don't fail the delivery.
+            }
+            // Fire the in-game receipt while we're still on the main
+            // thread — chat message + sound + particles for the
+            // buyer. No-op if the player went offline in the tiny
+            // window between dispatch and now.
+            try {
+                DeliveryReceipt.fire(plugin, task.playerName(), task);
+            } catch (Throwable t) {
+                // Receipt is pure polish — if it throws (bad config,
+                // particle/sound enum mismatch, etc.) don't let it
+                // back out the delivery's confirm.
+                log.warning("Delivery receipt failed: " + t.getMessage());
             }
             asyncReport(task, null);
         } else {

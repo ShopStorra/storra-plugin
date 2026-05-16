@@ -32,5 +32,40 @@ persistence:
   database-file: "storra.db"
   history-retention: 100
 
+# Delivery receipt — the moment a buyer's purchase actually lands.
+#
+# When a delivery successfully fires AND the player is online, the
+# plugin sends a chat message + plays a sound + spawns particles.
+# Defaults are tuned to feel celebratory without being intrusive;
+# turn any piece off by clearing its value (set to "") or setting
+# enabled to false to silence everything.
+#
+# Template variables:
+#   {package}  — the package name (e.g. "VIP Rank")
+#   {player}   — the player's name
+receipt:
+  enabled: true
+
+  # Chat message. Empty string skips the message. Bukkit & color
+  # codes work (&6 gold, &e yellow, &b aqua, &l bold, &o italic).
+  chat: "&6&l✦ &eThanks for purchasing &b&l{package}&e! &6&l✦"
+
+  # Title bar (the big text in the middle of the screen). Defaults
+  # to title=empty so only the subtitle shows — quieter UX.
+  title: ""
+  subtitle: "&7{package} delivered"
+
+  # Bukkit Sound enum name — see https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/Sound.html
+  # Common picks: ENTITY_PLAYER_LEVELUP, ENTITY_EXPERIENCE_ORB_PICKUP,
+  # UI_TOAST_CHALLENGE_COMPLETE, BLOCK_NOTE_BLOCK_BELL.
+  # Set to "" to disable.
+  sound: "ENTITY_PLAYER_LEVELUP"
+
+  # Bukkit Particle enum name — see https://hub.spigotmc.org/javadocs/bukkit/org/bukkit/Particle.html
+  # Common picks: TOTEM_OF_UNDYING, HEART, FIREWORK, HAPPY_VILLAGER,
+  # WAX_ON. Set to "" or particle-count: 0 to disable.
+  particle: "TOTEM_OF_UNDYING"
+  particle-count: 50
+
 debug:
   enabled: false

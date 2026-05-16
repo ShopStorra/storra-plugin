@@ -33,6 +33,9 @@ public final class DeliveryTask {
     @SerializedName("requireOnline")
     private boolean requireOnline;
 
+    @SerializedName("productName")
+    private String productName;
+
     public String commandId() {
         return commandId;
     }
@@ -47,5 +50,27 @@ public final class DeliveryTask {
 
     public boolean requireOnline() {
         return requireOnline;
+    }
+
+    public String productName() {
+        return productName;
+    }
+
+    /**
+     * Test-only / receipt-only factory. The offline-queue drain
+     * path reconstructs a partial DeliveryTask for the receipt
+     * helper without a wire roundtrip — only the player + product
+     * fields are used by the receipt, the rest stay null/default.
+     */
+    public static DeliveryTask forReceipt(
+        String commandId,
+        String playerName,
+        String productName
+    ) {
+        DeliveryTask t = new DeliveryTask();
+        t.commandId = commandId;
+        t.playerName = playerName;
+        t.productName = productName;
+        return t;
     }
 }

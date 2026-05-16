@@ -18,8 +18,12 @@ import java.util.List;
  *   2. enqueue() writes a row keyed on (player_name_lower, command_id).
  *   3. PlayerJoinListener calls drainForPlayer() on PlayerJoinEvent
  *      with the joining player's lowercased name; DeliveryManager
- *      then runs the rows.
+ *      then runs the rows + fires the in-game receipt.
  *   4. dequeue() removes the row once the command runs.
+ *
+ * `product_name` is persisted alongside the command so the
+ * DeliveryReceipt can name the package on drain — without it the
+ * receipt would have to fall back to a generic "your purchase".
  *
  * Primary key is command_id (server-side UUID, globally unique).
  * Lookup index is on player_name_lower for the join-event drain.
@@ -32,15 +36,21 @@ public final class OfflineQueue {
         this.database = database;
     }
 
-    public void enqueue(String commandId, String playerNameLower, String command) throws SQLException {
+    public void enqueue(
+        String commandId,
+        String playerNameLower,
+        String command,
+        String productName
+    ) throws SQLException {
         Connection conn = database.connection();
         try (PreparedStatement st = conn.prepareStatement(
             "INSERT OR REPLACE INTO delivery_offline_queue " +
-            "(command_id, player_name_lower, command) VALUES (?, ?, ?)"
+            "(command_id, player_name_lower, command, product_name) VALUES (?, ?, ?, ?)"
         )) {
             st.setString(1, commandId);
             st.setString(2, playerNameLower);
             st.setString(3, command);
+            st.setString(4, productName);
             st.executeUpdate();
         }
     }
@@ -49,7 +59,7 @@ public final class OfflineQueue {
         Connection conn = database.connection();
         List<QueuedTask> rows = new ArrayList<>();
         try (PreparedStatement st = conn.prepareStatement(
-            "SELECT command_id, player_name_lower, command FROM delivery_offline_queue " +
+            "SELECT command_id, player_name_lower, command, product_name FROM delivery_offline_queue " +
             "WHERE player_name_lower = ? ORDER BY queued_at ASC"
         )) {
             st.setString(1, playerNameLower);
@@ -58,7 +68,8 @@ public final class OfflineQueue {
                     rows.add(new QueuedTask(
                         rs.getString("command_id"),
                         rs.getString("player_name_lower"),
-                        rs.getString("command")
+                        rs.getString("command"),
+                        rs.getString("product_name")
                     ));
                 }
             }
@@ -85,5 +96,10 @@ public final class OfflineQueue {
         }
     }
 
-    public record QueuedTask(String commandId, String playerNameLower, String command) {}
+    public record QueuedTask(
+        String commandId,
+        String playerNameLower,
+        String command,
+        String productName
+    ) {}
 }
