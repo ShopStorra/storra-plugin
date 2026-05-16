@@ -84,7 +84,9 @@ public final class HeartbeatService {
                     final int finalChunks = chunks;
                     Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
                         try {
-                            api.heartbeat(snapshot(finalEntities, finalChunks));
+                            StorraApiClient.HeartbeatResponse resp =
+                                api.heartbeat(snapshot(finalEntities, finalChunks));
+                            handleHeartbeatResponse(resp);
                         } catch (Exception ex) {
                             log.warning("Heartbeat failed: " + ex.getMessage());
                         }
@@ -98,6 +100,30 @@ public final class HeartbeatService {
         if (task != null) {
             task.cancel();
             task = null;
+        }
+    }
+
+    private volatile boolean updateNoticeLogged = false;
+
+    /**
+     * Surface an "update available" notice to the merchant console
+     * the FIRST time we get a successful heartbeat back saying so.
+     * Subsequent successes stay quiet — one notice per plugin boot
+     * is enough; the merchant has to actually download + drop the
+     * new jar to clear it.
+     */
+    private void handleHeartbeatResponse(StorraApiClient.HeartbeatResponse resp) {
+        if (!resp.ok() || updateNoticeLogged) return;
+        if (resp.updateAvailable() && resp.latestVersion() != null) {
+            updateNoticeLogged = true;
+            log.warning(
+                "[33m═══════════════════════════════════════════════[0m\n" +
+                "[33m  Storra plugin update available![0m\n" +
+                "  Running:   " + pluginVersion + "\n" +
+                "  Latest:    " + resp.latestVersion() + "\n" +
+                "  Download:  https://storra.xyz/plugin\n" +
+                "[33m═══════════════════════════════════════════════[0m"
+            );
         }
     }
 

@@ -67,4 +67,32 @@ public final class PollService {
             task = null;
         }
     }
+
+    /**
+     * Trigger an out-of-band poll RIGHT NOW, in addition to the
+     * normal cadence. Used by `/storra forcecheck` so an admin
+     * doesn't have to wait up to 30s for the next scheduled tick.
+     * Runs async exactly like the scheduled poll. Returns how many
+     * tasks the API surfaced (0 if nothing was ready).
+     */
+    public java.util.concurrent.CompletableFuture<Integer> runNow() {
+        java.util.concurrent.CompletableFuture<Integer> result =
+            new java.util.concurrent.CompletableFuture<>();
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                try {
+                    List<DeliveryTask> tasks = api.fetchPending();
+                    for (DeliveryTask t : tasks) {
+                        deliveryManager.deliver(t);
+                    }
+                    result.complete(tasks.size());
+                } catch (Exception ex) {
+                    log.warning("Forced poll failed: " + ex.getMessage());
+                    result.completeExceptionally(ex);
+                }
+            }
+        }.runTaskAsynchronously(plugin);
+        return result;
+    }
 }

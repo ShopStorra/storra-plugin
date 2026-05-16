@@ -178,7 +178,7 @@ class StorraApiClientIntegrationTest {
         StorraApiClient.HeartbeatStats stats = new StorraApiClient.HeartbeatStats(
             "0.1.0", 12, 100, 19.8, 47.3, 1024L, 4096L, 23.5, 1500, 240
         );
-        assertThat(client.heartbeat(stats)).isTrue();
+        assertThat(client.heartbeat(stats).ok()).isTrue();
 
         // camelCase to match the server's handleHeartbeat contract.
         wireMock.verify(postRequestedFor(urlEqualTo("/api/v1/plugin/heartbeat"))

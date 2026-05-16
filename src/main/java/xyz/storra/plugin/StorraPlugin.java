@@ -105,6 +105,15 @@ public final class StorraPlugin extends JavaPlugin {
     }
 
     /**
+     * Exposes the poll service so /storra forcecheck can trigger
+     * an immediate /pending pull. Returns null when the plugin
+     * isn't paired (services haven't started).
+     */
+    public PollService getPollService() {
+        return pollService;
+    }
+
+    /**
      * Reload from disk. Called by /storra reload after a merchant
      * edits config.yml on a running server, AND by /storra pair
      * after writing the pairing values. Bounces services if the

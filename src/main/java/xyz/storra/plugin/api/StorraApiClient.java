@@ -155,33 +155,71 @@ public final class StorraApiClient {
     }
 
     /**
+     * Parsed shape of the /heartbeat response. Server returns the
+     * latest published plugin version + an updateAvailable flag
+     * computed from what the plugin reported in the request body.
+     */
+    public record HeartbeatResponse(
+        boolean ok,
+        String latestVersion,
+        boolean updateAvailable
+    ) {
+        public static HeartbeatResponse failed() {
+            return new HeartbeatResponse(false, null, false);
+        }
+    }
+
+    private static final class RawHeartbeatResponse {
+        Boolean ok;
+        String latestVersion;
+        Boolean updateAvailable;
+    }
+
+    /**
      * POST /api/v1/plugin/heartbeat — server diagnostics.
      *
-     * Server responds with 200 + `{ok: true, ...}` on success, or
-     * 200 + `{ok: false, reason: "transient"}` when a downstream
-     * write briefly fails (typically during a Storra deploy's
-     * container-recreate window). The transient case is INFO-level
-     * since the next heartbeat will retry naturally; only hard
-     * non-200s warrant a WARNING.
+     * Server responds with 200 + `{ok: true, latestVersion,
+     * updateAvailable}` on success, or 200 + `{ok: false, reason:
+     * "transient"}` when a downstream write briefly fails (typically
+     * during a Storra deploy's container-recreate window). The
+     * transient case is INFO-level since the next heartbeat will
+     * retry naturally; only hard non-200s warrant a WARNING.
+     *
+     * Caller (HeartbeatService) inspects `updateAvailable` on the
+     * first successful heartbeat and surfaces a one-time notice to
+     * the merchant console if a newer plugin version is out.
      */
-    public boolean heartbeat(HeartbeatStats stats) throws IOException, InterruptedException {
+    public HeartbeatResponse heartbeat(HeartbeatStats stats) throws IOException, InterruptedException {
         String body = GSON.toJson(stats);
         HttpResponse<String> res = signedSend("/api/v1/plugin/heartbeat", "POST", body);
         if (res.statusCode() != 200) {
             logNonOk("heartbeat", res.statusCode(), res.body());
-            return false;
+            return HeartbeatResponse.failed();
         }
-        // Inspect the body for the soft-failure marker.
         String responseBody = res.body();
-        if (responseBody != null && responseBody.contains("\"ok\":false")) {
+        if (responseBody == null || responseBody.isEmpty()) {
+            return HeartbeatResponse.failed();
+        }
+        if (responseBody.contains("\"ok\":false")) {
             String reason = responseBody.contains("\"reason\":\"")
                 ? responseBody.replaceAll(".*\"reason\":\"([^\"]*)\".*", "$1")
                 : "unknown";
             log.info("heartbeat: server soft-fail (" + reason
                 + ") — retrying on next tick");
-            return false;
+            return HeartbeatResponse.failed();
         }
-        return true;
+        try {
+            RawHeartbeatResponse parsed = GSON.fromJson(responseBody, RawHeartbeatResponse.class);
+            if (parsed == null) return HeartbeatResponse.failed();
+            return new HeartbeatResponse(
+                parsed.ok != null && parsed.ok,
+                parsed.latestVersion,
+                parsed.updateAvailable != null && parsed.updateAvailable
+            );
+        } catch (Exception ex) {
+            // Malformed but 200 — count as soft success, no update info.
+            return new HeartbeatResponse(true, null, false);
+        }
     }
 
     /**
