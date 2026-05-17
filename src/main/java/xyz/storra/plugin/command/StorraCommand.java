@@ -352,26 +352,35 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
             ? "§7To buy " + result.packageName() + ", click this link:"
             : "§7Click this link to purchase " + result.packageName() + ":";
         recipient.sendMessage(leadIn);
-        // For players, send via tellraw so the URL is explicitly
-        // clickable + has an open_url action (the auto-detect path
-        // in modern clients still works but tellraw is more reliable
-        // across mod packs). The text is the raw URL itself — no
-        // `[Click here]` indirection — matching Tebex's idiom.
+        sendClickableUrl(recipient, result.url());
+    }
+
+    /**
+     * Send a clickable URL via Paper's Adventure Component API.
+     * We previously round-tripped JSON through
+     * `dispatchCommand("tellraw ...")` which sometimes rendered the
+     * styled URL but silently dropped the clickEvent — the user saw
+     * an aqua underlined line that didn't open the browser on click.
+     * Adventure components hand the structured Component directly to
+     * the recipient's outbound packet path, bypassing the brigadier
+     * parser entirely. Same approach Tebex's plugin uses on Paper.
+     */
+    private static void sendClickableUrl(CommandSender recipient, String url) {
         if (recipient instanceof org.bukkit.entity.Player p) {
-            String url = result.url();
-            String escaped = url.replace("\\", "\\\\").replace("\"", "\\\"");
-            String json = "[\"\",{\"text\":\"" + escaped + "\","
-                + "\"color\":\"aqua\","
-                + "\"underlined\":true,"
-                + "\"clickEvent\":{\"action\":\"open_url\",\"value\":\"" + escaped + "\"},"
-                + "\"hoverEvent\":{\"action\":\"show_text\",\"contents\":\"§7Click to open in your browser\"}"
-                + "}]";
-            plugin.getServer().dispatchCommand(
-                plugin.getServer().getConsoleSender(),
-                "tellraw " + p.getName() + " " + json
-            );
+            net.kyori.adventure.text.Component component =
+                net.kyori.adventure.text.Component.text(url)
+                    .color(net.kyori.adventure.text.format.NamedTextColor.AQUA)
+                    .decorate(net.kyori.adventure.text.format.TextDecoration.UNDERLINED)
+                    .clickEvent(net.kyori.adventure.text.event.ClickEvent.openUrl(url))
+                    .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
+                        net.kyori.adventure.text.Component.text("Click to open in your browser")
+                            .color(net.kyori.adventure.text.format.NamedTextColor.GRAY)
+                    ));
+            p.sendMessage(component);
         } else {
-            recipient.sendMessage("§b" + result.url());
+            // Console / non-player — plain URL line. Auto-detect in
+            // modern terminals lets the operator click it from there.
+            recipient.sendMessage("§b" + url);
         }
     }
 

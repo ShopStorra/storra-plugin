@@ -86,50 +86,23 @@ public final class StoreAliasListener implements Listener {
         // this link:") followed by the URL as its own clickable line.
         // Matches the /storra checkout output so /buy and /storra
         // checkout feel like one consistent UX.
+        //
+        // Adventure Component API (Paper 1.21 native) instead of
+        // round-tripping JSON through `dispatchCommand("tellraw ...")`
+        // — the tellraw path sometimes rendered styled but dropped
+        // the clickEvent silently. Adventure hands the structured
+        // Component straight to the outbound packet path.
         player.sendMessage("§7To visit our store, click this link:");
-        String json = "[\"\",{"
-            + "\"text\":\"" + escape(url) + "\","
-            + "\"color\":\"aqua\","
-            + "\"underlined\":true,"
-            + "\"clickEvent\":{\"action\":\"open_url\",\"value\":\"" + escape(url) + "\"},"
-            + "\"hoverEvent\":{\"action\":\"show_text\",\"contents\":\"\\u00a77Click to open in your browser\"}"
-            + "}]";
-        try {
-            org.bukkit.Bukkit.dispatchCommand(
-                org.bukkit.Bukkit.getConsoleSender(),
-                "tellraw " + player.getName() + " " + json
-            );
-        } catch (Throwable t) {
-            // Fallback to plain chat if tellraw isn't accepted for
-            // some reason (mod conflict, command renamed, etc.).
-            // Auto-detect in modern clients still makes it clickable.
-            player.sendMessage("§b" + url);
-        }
+        net.kyori.adventure.text.Component link =
+            net.kyori.adventure.text.Component.text(url)
+                .color(net.kyori.adventure.text.format.NamedTextColor.AQUA)
+                .decorate(net.kyori.adventure.text.format.TextDecoration.UNDERLINED)
+                .clickEvent(net.kyori.adventure.text.event.ClickEvent.openUrl(url))
+                .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
+                    net.kyori.adventure.text.Component.text("Click to open in your browser")
+                        .color(net.kyori.adventure.text.format.NamedTextColor.GRAY)
+                ));
+        player.sendMessage(link);
     }
 
-    /**
-     * Minimal JSON string escape — URLs from config.yml shouldn't
-     * contain quotes or backslashes, but we defend against a
-     * misconfigured URL injecting JSON.
-     */
-    private static String escape(String s) {
-        StringBuilder sb = new StringBuilder(s.length() + 8);
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"': sb.append("\\\""); break;
-                case '\\': sb.append("\\\\"); break;
-                case '\n': sb.append("\\n"); break;
-                case '\r': sb.append("\\r"); break;
-                case '\t': sb.append("\\t"); break;
-                default:
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-            }
-        }
-        return sb.toString();
-    }
 }
