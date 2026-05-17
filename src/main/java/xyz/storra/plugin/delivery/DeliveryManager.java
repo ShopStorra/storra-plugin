@@ -231,10 +231,38 @@ public final class DeliveryManager {
         return free;
     }
 
-    /** Returns true on Bukkit success. Catches throw — Bukkit can
-     *  throw on a malformed command. */
+    /**
+     * Run a delivery's command line. Two paths:
+     *
+     *   1. Broadcast — the command starts with the literal
+     *      "{broadcast}" prefix. Storra-native server-wide chat
+     *      message so merchants don't need a third-party broadcast
+     *      plugin (Tebex requires one). The rest of the line is
+     *      passed to Bukkit.broadcastMessage AFTER translating
+     *      ampersand color codes (&6, &l, etc.) the way every other
+     *      MC chat plugin does. Always returns true — broadcasting
+     *      can't really fail except by NPE, which the outer catch
+     *      handles.
+     *
+     *   2. Normal command — pass straight to Bukkit.dispatchCommand
+     *      as the console sender. Returns Bukkit's success boolean;
+     *      malformed commands throw, caught + reported.
+     */
     private boolean dispatchCommand(String command) {
         try {
+            if (command != null && command.startsWith(BROADCAST_PREFIX)) {
+                String message = command.substring(BROADCAST_PREFIX.length());
+                // Strip leading space when the merchant wrote
+                // "{broadcast} message" (with a space). "{broadcast}"
+                // with no space is also fine — just renders an
+                // immediate-color-coded message.
+                if (message.startsWith(" ")) {
+                    message = message.substring(1);
+                }
+                String translated = org.bukkit.ChatColor.translateAlternateColorCodes('&', message);
+                Bukkit.broadcastMessage(translated);
+                return true;
+            }
             ConsoleCommandSender console = Bukkit.getConsoleSender();
             return Bukkit.dispatchCommand(console, command);
         } catch (Throwable t) {
@@ -242,6 +270,8 @@ public final class DeliveryManager {
             return false;
         }
     }
+
+    private static final String BROADCAST_PREFIX = "{broadcast}";
 
     private void asyncReport(DeliveryTask task, String failReason) {
         asyncReport(task.commandId(), failReason);
