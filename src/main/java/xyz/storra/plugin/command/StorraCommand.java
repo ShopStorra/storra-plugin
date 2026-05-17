@@ -57,7 +57,7 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 return handleHistory(sender);
             case "reload":
                 plugin.reloadPluginConfig();
-                sender.sendMessage("[Storra] config reloaded.");
+                sender.sendMessage("§aConfig reloaded.");
                 return true;
             case "forcecheck":
                 return handleForceCheck(sender);
@@ -92,10 +92,10 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
      */
     private boolean handleForceCheck(CommandSender sender) {
         if (plugin.getPollService() == null) {
-            sender.sendMessage("[Storra] poll service not running — pair the plugin first.");
+            sender.sendMessage("§cPoll service not running. Pair the plugin first.");
             return true;
         }
-        sender.sendMessage("[Storra] polling now…");
+        sender.sendMessage("§ePolling for pending deliveries…");
         plugin.getPollService().runNow().whenComplete((count, err) -> {
             // whenComplete may fire on the async thread — bounce
             // back to main for the sender message (Bukkit allows
@@ -103,12 +103,12 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
             // but players are stricter).
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (err != null) {
-                    sender.sendMessage("[Storra] poll failed: " + err.getMessage());
+                    sender.sendMessage("§cPoll failed: " + err.getMessage());
                 } else if (count == 0) {
-                    sender.sendMessage("[Storra] no pending deliveries.");
+                    sender.sendMessage("§7No pending deliveries.");
                 } else {
                     sender.sendMessage(
-                        "[Storra] processed " + count + " pending deliver"
+                        "§aProcessed " + count + " pending deliver"
                         + (count == 1 ? "y" : "ies") + "."
                     );
                 }
@@ -125,10 +125,8 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
     private boolean handleDebug(CommandSender sender, String[] args) {
         if (args.length < 2) {
             boolean current = plugin.getConfig().getBoolean("debug.enabled", false);
-            sender.sendMessage(
-                "[Storra] debug is currently " + (current ? "ON" : "OFF")
-                + " — usage: /storra debug <on|off>"
-            );
+            sender.sendMessage("§7Debug logging is currently " + (current ? "on" : "off") + ".");
+            sender.sendMessage("§cUsage: /storra debug <on|off>");
             return true;
         }
         String value = args[1].toLowerCase();
@@ -138,32 +136,30 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         } else if (value.equals("off") || value.equals("false") || value.equals("0")) {
             enable = false;
         } else {
-            sender.sendMessage("[Storra] expected 'on' or 'off', got: " + args[1]);
+            sender.sendMessage("§cExpected 'on' or 'off'.");
             return true;
         }
         plugin.getConfig().set("debug.enabled", enable);
         plugin.saveConfig();
         plugin.reloadPluginConfig();
-        sender.sendMessage("[Storra] debug logging " + (enable ? "ENABLED" : "DISABLED") + ".");
+        sender.sendMessage("§aDebug logging " + (enable ? "enabled" : "disabled") + ".");
         return true;
     }
 
     private boolean handlePair(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage("Usage: /storra pair <code>");
+            sender.sendMessage("§cUsage: /storra pair <code>");
             return true;
         }
         String code = args[1];
         PluginConfig cfg = plugin.getPluginConfig();
         if (cfg == null) {
-            sender.sendMessage("[Storra] plugin not initialized.");
+            sender.sendMessage("§cPlugin not initialized.");
             return true;
         }
         if (cfg.isPaired()) {
-            sender.sendMessage(
-                "[Storra] already paired (server-id=" + cfg.serverId() + "). " +
-                "Generate a new code in the dashboard if you want to re-pair."
-            );
+            sender.sendMessage("§7Already paired with server " + cfg.serverId() + ".");
+            sender.sendMessage("§7Generate a new code in the dashboard if you want to re-pair.");
             return true;
         }
         // Pairing call is network I/O — run async so we don't block
@@ -171,7 +167,7 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         // on caller). Reload + status messages get re-sent on the
         // server's main thread once the response lands.
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            sender.sendMessage("[Storra] pairing…");
+            sender.sendMessage("§ePairing…");
             try {
                 StorraApiClient.PairResult result = StorraApiClient.pair(
                     cfg.baseUrl(),
@@ -179,10 +175,8 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                     plugin.getLogger()
                 );
                 if (result == null) {
-                    sender.sendMessage(
-                        "[Storra] pairing failed — code is invalid or expired. " +
-                        "Generate a fresh code in the dashboard."
-                    );
+                    sender.sendMessage("§cPairing failed. The code is invalid or expired.");
+                    sender.sendMessage("§7Generate a fresh code in the dashboard.");
                     return;
                 }
                 // Persist + reload back on the main thread (config
@@ -192,13 +186,11 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     PluginConfig.writePairing(plugin, result.serverId(), result.secret());
                     plugin.reloadPluginConfig();
-                    sender.sendMessage(
-                        "[Storra] paired with server-id=" + result.serverId() + ". " +
-                        "Services online — polling Storra for deliveries."
-                    );
+                    sender.sendMessage("§aPaired with server " + result.serverId() + ".");
+                    sender.sendMessage("§7Services online. Polling Storra for deliveries.");
                 });
             } catch (Exception ex) {
-                sender.sendMessage("[Storra] pairing error: " + ex.getMessage());
+                sender.sendMessage("§cPairing error: " + ex.getMessage());
             }
         });
         return true;
@@ -207,23 +199,23 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
     private boolean handleStatus(CommandSender sender) {
         PluginConfig cfg = plugin.getPluginConfig();
         if (cfg == null) {
-            sender.sendMessage("[Storra] plugin not initialized.");
+            sender.sendMessage("§cPlugin not initialized.");
             return true;
         }
         if (!cfg.isPaired()) {
-            sender.sendMessage("[Storra] not paired. Run `/storra pair <code>`.");
+            sender.sendMessage("§cNot paired. Run /storra pair <code>.");
             return true;
         }
-        sender.sendMessage("[Storra] paired with server-id=" + cfg.serverId());
+        sender.sendMessage("§7Paired with server " + cfg.serverId() + ".");
         sender.sendMessage(
-            "[Storra] poll=" + cfg.pollInterval().getSeconds() + "s, " +
-            "heartbeat=" + cfg.heartbeatInterval().getSeconds() + "s"
+            "§7Poll interval: " + cfg.pollInterval().getSeconds() + "s, "
+            + "heartbeat: " + cfg.heartbeatInterval().getSeconds() + "s."
         );
         try {
             int depth = plugin.getOfflineQueue().depth();
-            sender.sendMessage("[Storra] offline queue depth: " + depth);
+            sender.sendMessage("§7Offline queue depth: " + depth + ".");
         } catch (Exception ex) {
-            sender.sendMessage("[Storra] offline queue: ?? (" + ex.getMessage() + ")");
+            sender.sendMessage("§cOffline queue unavailable: " + ex.getMessage());
         }
         return true;
     }
@@ -232,27 +224,30 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         try {
             var rows = plugin.getDeliveryHistory().recent(25);
             if (rows.isEmpty()) {
-                sender.sendMessage("[Storra] no deliveries recorded yet.");
+                sender.sendMessage("§7No deliveries recorded yet.");
                 return true;
             }
-            sender.sendMessage("[Storra] last " + rows.size() + " deliveries:");
+            sender.sendMessage("§7Last " + rows.size() + " deliveries:");
             for (var r : rows) {
-                String marker = "delivered".equals(r.status()) ? "✔" : "✖";
-                String reason = r.reason() == null ? "" : " — " + r.reason();
-                // command_id is a UUID — take the first 8 chars so the
-                // history line stays scannable in the chat / console.
+                // Per-row status uses semantic color: green = delivered,
+                // red = failed. Matches the rest of the plugin chat
+                // palette so the merchant doesn't have to learn a
+                // separate vocabulary for history output.
+                boolean ok = "delivered".equals(r.status());
+                String marker = ok ? "§a✔" : "§c✖";
+                String reason = r.reason() == null ? "" : " §7— " + r.reason();
                 String shortId = r.commandId() == null
                     ? "?"
                     : r.commandId().substring(0, Math.min(8, r.commandId().length()));
                 sender.sendMessage(
-                    "  " + marker + " #" + shortId +
-                    " " + (r.playerName() == null ? "?" : r.playerName()) +
-                    " · " + (r.command() == null ? "" : r.command()) +
-                    reason
+                    marker + " §7#" + shortId
+                    + " " + (r.playerName() == null ? "?" : r.playerName())
+                    + " — " + (r.command() == null ? "" : r.command())
+                    + reason
                 );
             }
         } catch (Exception ex) {
-            sender.sendMessage("[Storra] history failed: " + ex.getMessage());
+            sender.sendMessage("§cHistory failed: " + ex.getMessage());
         }
         return true;
     }
@@ -265,29 +260,29 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
      */
     private boolean handleCheckout(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage("§7Usage: §f/storra checkout <package>");
+            sender.sendMessage("§cUsage: /storra checkout <package>");
             return true;
         }
         String ref = joinArgs(args, 1);
         StorraApiClient api = plugin.getApi();
         if (api == null) {
-            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            sender.sendMessage("§cNot paired. Run /storra pair <code> first.");
             return true;
         }
-        sender.sendMessage("§7[Storra] resolving package…");
+        sender.sendMessage("§eResolving package…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.CheckoutUrlResult result = api.checkoutUrl(ref);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] " + result.error());
+                        sender.sendMessage("§c" + result.error());
                         return;
                     }
                     sendCheckoutLink(sender, sender, result);
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] checkout failed: " + ex.getMessage())
+                    sender.sendMessage("§cCheckout failed: " + ex.getMessage())
                 );
             }
         });
@@ -301,38 +296,38 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
      */
     private boolean handleSendLink(CommandSender sender, String[] args) {
         if (args.length < 3) {
-            sender.sendMessage("§7Usage: §f/storra sendlink <player> <package>");
+            sender.sendMessage("§cUsage: /storra sendlink <player> <package>");
             return true;
         }
         String targetName = args[1];
         String ref = joinArgs(args, 2);
         org.bukkit.entity.Player target = plugin.getServer().getPlayerExact(targetName);
         if (target == null) {
-            sender.sendMessage("§c[Storra] player not online: " + targetName);
+            sender.sendMessage("§cThat player is not online: " + targetName);
             return true;
         }
         StorraApiClient api = plugin.getApi();
         if (api == null) {
-            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            sender.sendMessage("§cNot paired. Run /storra pair <code> first.");
             return true;
         }
-        sender.sendMessage("§7[Storra] resolving package…");
+        sender.sendMessage("§eResolving package…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.CheckoutUrlResult result = api.checkoutUrl(ref);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] " + result.error());
+                        sender.sendMessage("§c" + result.error());
                         return;
                     }
                     sendCheckoutLink(sender, target, result);
                     sender.sendMessage(
-                        "§a[Storra] sent " + result.packageName() + " link to " + target.getName() + "."
+                        "§aSent " + result.packageName() + " link to " + target.getName() + "."
                     );
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] sendlink failed: " + ex.getMessage())
+                    sender.sendMessage("§cSendlink failed: " + ex.getMessage())
                 );
             }
         });
@@ -340,32 +335,43 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
     }
 
     /**
-     * Format + dispatch the checkout link to `recipient`. Uses
-     * Bukkit's tellraw JSON for a clickable URL — much nicer UX
-     * than a copy-paste plaintext link.
+     * Format + dispatch the checkout link to `recipient`. Tebex
+     * idiom — a short lead-in describing what they're about to
+     * click, then the URL on its own line. The Minecraft client
+     * auto-detects URLs in chat as clickable, so we don't need a
+     * `[Click here]` tellraw wrapper that hides what we're sending.
+     * The lead-in changes wording for self vs. staff-sent links so
+     * the recipient knows whether they triggered it themselves.
      */
     private void sendCheckoutLink(
         CommandSender invoker,
         CommandSender recipient,
         StorraApiClient.CheckoutUrlResult result
     ) {
-        recipient.sendMessage("§6§l✦ " + (invoker == recipient ? "Checkout" : "Purchase invite") + " §6§l✦");
-        recipient.sendMessage("§7Package: §f" + result.packageName());
-        recipient.sendMessage("§7Store:   §f" + result.storeName());
-        // For console / non-player recipients, just show the URL
-        // (no tellraw click event). For players, use tellraw JSON.
+        String leadIn = invoker == recipient
+            ? "§7To buy " + result.packageName() + ", click this link:"
+            : "§7Click this link to purchase " + result.packageName() + ":";
+        recipient.sendMessage(leadIn);
+        // For players, send via tellraw so the URL is explicitly
+        // clickable + has an open_url action (the auto-detect path
+        // in modern clients still works but tellraw is more reliable
+        // across mod packs). The text is the raw URL itself — no
+        // `[Click here]` indirection — matching Tebex's idiom.
         if (recipient instanceof org.bukkit.entity.Player p) {
-            String json = "[\"\",{\"text\":\"§a[Click here to open the checkout]\","
-                + "\"clickEvent\":{\"action\":\"open_url\",\"value\":\""
-                + result.url().replace("\"", "\\\"") + "\"},"
-                + "\"hoverEvent\":{\"action\":\"show_text\",\"contents\":\""
-                + result.url().replace("\"", "\\\"") + "\"}}]";
+            String url = result.url();
+            String escaped = url.replace("\\", "\\\\").replace("\"", "\\\"");
+            String json = "[\"\",{\"text\":\"" + escaped + "\","
+                + "\"color\":\"aqua\","
+                + "\"underlined\":true,"
+                + "\"clickEvent\":{\"action\":\"open_url\",\"value\":\"" + escaped + "\"},"
+                + "\"hoverEvent\":{\"action\":\"show_text\",\"contents\":\"§7Click to open in your browser\"}"
+                + "}]";
             plugin.getServer().dispatchCommand(
                 plugin.getServer().getConsoleSender(),
                 "tellraw " + p.getName() + " " + json
             );
         } else {
-            recipient.sendMessage("§7URL: §f" + result.url());
+            recipient.sendMessage("§b" + result.url());
         }
     }
 
@@ -375,30 +381,38 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
      */
     private boolean handleLookup(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage("§7Usage: §f/storra lookup <player>");
+            sender.sendMessage("§cUsage: /storra lookup <player>");
             return true;
         }
         String username = args[1];
         StorraApiClient api = plugin.getApi();
         if (api == null) {
-            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            sender.sendMessage("§cNot paired. Run /storra pair <code> first.");
             return true;
         }
-        sender.sendMessage("§7[Storra] looking up " + username + "…");
+        sender.sendMessage("§eLooking up " + username + "…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.LookupResult result = api.lookup(username);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] " + result.error());
+                        sender.sendMessage("§c" + result.error());
                         return;
                     }
                     if (result.orders().isEmpty()) {
-                        sender.sendMessage("§7[Storra] no orders found for §f" + username + "§7.");
+                        sender.sendMessage("§7No orders found for " + username + ".");
                         return;
                     }
-                    sender.sendMessage("§6§lOrders for " + username + " §7(last " + result.orders().size() + ")");
+                    sender.sendMessage(
+                        "§7Recent orders for " + username
+                        + " (showing " + result.orders().size() + "):"
+                    );
                     for (StorraApiClient.LookupOrder o : result.orders()) {
+                        // Per-row status uses semantic color: green
+                        // for delivered, red for failed, yellow for
+                        // anything in-between (pending, refunded).
+                        // Status word inline with the line so the
+                        // row stays scannable at a glance.
                         String statusColor = "delivered".equalsIgnoreCase(o.status())
                             ? "§a"
                             : "failed".equalsIgnoreCase(o.status())
@@ -407,14 +421,15 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                         String items = o.items() == null || o.items().isEmpty()
                             ? "—"
                             : o.items().stream()
-                                .map(i -> i.name() + (i.qty() > 1 ? " ×" + i.qty() : ""))
+                                .map(i -> i.name() + (i.qty() > 1 ? " x" + i.qty() : ""))
                                 .collect(java.util.stream.Collectors.joining(", "));
                         // Show amount in dollars (totalAmount is in cents).
                         double dollars = o.totalAmount() / 100.0;
                         sender.sendMessage(String.format(
-                            "§7  %s §8· %s$%.2f §7%s §8· %s",
+                            "§7%s — %s%s§7 — $%.2f %s — %s",
                             o.transactionId(),
                             statusColor,
+                            o.status() == null ? "?" : o.status(),
                             dollars,
                             o.currency() == null ? "" : o.currency(),
                             items
@@ -423,7 +438,7 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] lookup failed: " + ex.getMessage())
+                    sender.sendMessage("§cLookup failed: " + ex.getMessage())
                 );
             }
         });
@@ -432,32 +447,33 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
 
     private boolean handleBan(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage("§7Usage: §f/storra ban <player> [reason]");
+            sender.sendMessage("§cUsage: /storra ban <player> [reason]");
             return true;
         }
         String username = args[1];
         String reason = args.length > 2 ? joinArgs(args, 2) : null;
         StorraApiClient api = plugin.getApi();
         if (api == null) {
-            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            sender.sendMessage("§cNot paired. Run /storra pair <code> first.");
             return true;
         }
-        sender.sendMessage("§7[Storra] banning §f" + username + "§7…");
+        sender.sendMessage("§eBanning " + username + "…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.BanResult result = api.ban(username, reason);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] ban failed: " + result.error());
+                        sender.sendMessage("§cBan failed: " + result.error());
                         return;
                     }
-                    String suffix = reason == null ? "" : " §7(" + reason + ")";
-                    sender.sendMessage("§a[Storra] §f" + result.username()
-                        + " §ais now banned from this store." + suffix);
+                    String suffix = reason == null ? "" : " (" + reason + ")";
+                    sender.sendMessage(
+                        "§a" + result.username() + " is now banned from this store." + suffix
+                    );
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] ban failed: " + ex.getMessage())
+                    sender.sendMessage("§cBan failed: " + ex.getMessage())
                 );
             }
         });
@@ -466,35 +482,33 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
 
     private boolean handleUnban(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage("§7Usage: §f/storra unban <player>");
+            sender.sendMessage("§cUsage: /storra unban <player>");
             return true;
         }
         String username = args[1];
         StorraApiClient api = plugin.getApi();
         if (api == null) {
-            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            sender.sendMessage("§cNot paired. Run /storra pair <code> first.");
             return true;
         }
-        sender.sendMessage("§7[Storra] unbanning §f" + username + "§7…");
+        sender.sendMessage("§eUnbanning " + username + "…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.UnbanResult result = api.unban(username);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] unban failed: " + result.error());
+                        sender.sendMessage("§cUnban failed: " + result.error());
                         return;
                     }
                     if (result.wasBanned()) {
-                        sender.sendMessage("§a[Storra] §f" + result.username()
-                            + " §ais no longer banned.");
+                        sender.sendMessage("§a" + result.username() + " is no longer banned.");
                     } else {
-                        sender.sendMessage("§7[Storra] §f" + result.username()
-                            + " §7was not on the ban list.");
+                        sender.sendMessage("§7" + result.username() + " was not on the ban list.");
                     }
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] unban failed: " + ex.getMessage())
+                    sender.sendMessage("§cUnban failed: " + ex.getMessage())
                 );
             }
         });
@@ -508,7 +522,7 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
         }
         StorraApiClient api = plugin.getApi();
         if (api == null) {
-            sender.sendMessage("§c[Storra] not paired — run /storra pair <code> first.");
+            sender.sendMessage("§cNot paired. Run /storra pair <code> first.");
             return true;
         }
         String op = args[1].toLowerCase();
@@ -527,42 +541,41 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
     }
 
     private void sendCouponUsage(CommandSender sender) {
-        sender.sendMessage("§7Usage:");
-        sender.sendMessage("§7   §f/storra coupon list");
-        sender.sendMessage("§7   §f/storra coupon create <code> <percent> §7(e.g. SUMMER 25)");
-        sender.sendMessage("§7   §f/storra coupon create <code> <amount> fixed §7(dollars off)");
-        sender.sendMessage("§7   §f/storra coupon delete <code>");
+        sender.sendMessage("§cUsage: /storra coupon <list|create|delete>");
     }
 
     private boolean handleCouponList(CommandSender sender, StorraApiClient api) {
-        sender.sendMessage("§7[Storra] fetching coupons…");
+        sender.sendMessage("§eFetching coupons…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.CouponListResult result = api.couponList();
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] " + result.error());
+                        sender.sendMessage("§c" + result.error());
                         return;
                     }
                     if (result.coupons().isEmpty()) {
-                        sender.sendMessage("§7[Storra] no coupons configured.");
+                        sender.sendMessage("§7No coupons configured.");
                         return;
                     }
-                    sender.sendMessage("§6§lActive coupons §7(" + result.coupons().size() + ")");
-                    for (StorraApiClient.CouponRow c : result.coupons()) {
-                        String discount = "percentage".equals(c.discountType())
-                            ? ((int) c.discountValue()) + "% off"
-                            : "$" + String.format(java.util.Locale.ROOT, "%.2f", c.discountValue()) + " off";
-                        String uses = c.maxUses() == null
-                            ? (c.currentUses() == null ? "" : "§7 — " + c.currentUses() + " uses")
-                            : "§7 — " + c.currentUses() + "/" + c.maxUses() + " uses";
-                        String status = Boolean.FALSE.equals(c.active()) ? " §c[inactive]" : "";
-                        sender.sendMessage("§7  §e" + c.code() + " §f" + discount + uses + status);
-                    }
+                    // Tebex idiom: header + comma-joined values on one
+                    // line, no bullet rows. Each coupon renders as
+                    // CODE(discount) so the row is scannable without
+                    // running into chat's word-wrap.
+                    String joined = result.coupons().stream()
+                        .map(c -> {
+                            String discount = "percentage".equals(c.discountType())
+                                ? ((int) c.discountValue()) + "%"
+                                : "$" + String.format(java.util.Locale.ROOT, "%.2f", c.discountValue());
+                            String inactive = Boolean.FALSE.equals(c.active()) ? " (inactive)" : "";
+                            return c.code() + " (" + discount + " off)" + inactive;
+                        })
+                        .collect(java.util.stream.Collectors.joining(", "));
+                    sender.sendMessage("§7Coupons: " + joined);
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] list failed: " + ex.getMessage())
+                    sender.sendMessage("§cList failed: " + ex.getMessage())
                 );
             }
         });
@@ -572,32 +585,32 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
     private boolean handleCouponCreate(CommandSender sender, StorraApiClient api, String[] args) {
         // Args: 0=coupon, 1=create, 2=code, 3=value, 4=(optional)fixed
         if (args.length < 4) {
-            sender.sendMessage("§7Usage: §f/storra coupon create <code> <percent> §7(or <amount> fixed)");
+            sender.sendMessage("§cUsage: /storra coupon create <code> <percent> [fixed]");
             return true;
         }
         String code = args[2];
         if (code.length() > 32) {
-            sender.sendMessage("§c[Storra] code too long (max 32 chars).");
+            sender.sendMessage("§cCode too long. Max 32 characters.");
             return true;
         }
         double value;
         try {
             value = Double.parseDouble(args[3]);
         } catch (NumberFormatException ex) {
-            sender.sendMessage("§c[Storra] discount must be a number.");
+            sender.sendMessage("§cDiscount must be a number.");
             return true;
         }
         if (value <= 0) {
-            sender.sendMessage("§c[Storra] discount must be > 0.");
+            sender.sendMessage("§cDiscount must be greater than zero.");
             return true;
         }
         String discountType = args.length > 4 && args[4].equalsIgnoreCase("fixed")
             ? "fixed" : "percentage";
         if ("percentage".equals(discountType) && value > 100) {
-            sender.sendMessage("§c[Storra] percent must be ≤100. Use 'fixed' for dollar-amount discounts.");
+            sender.sendMessage("§cPercent must be 100 or less. Use 'fixed' for dollar amounts.");
             return true;
         }
-        sender.sendMessage("§7[Storra] creating coupon §f" + code.toUpperCase() + "§7…");
+        sender.sendMessage("§eCreating coupon " + code.toUpperCase() + "…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.CouponCreateResult result = api.couponCreate(
@@ -605,18 +618,14 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
                 );
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] create failed: " + result.error());
+                        sender.sendMessage("§cCreate failed: " + result.error());
                         return;
                     }
-                    String discount = "percentage".equals(result.coupon().discountType())
-                        ? ((int) result.coupon().discountValue()) + "% off"
-                        : "$" + String.format(java.util.Locale.ROOT, "%.2f", result.coupon().discountValue()) + " off";
-                    sender.sendMessage("§a[Storra] coupon §f" + result.coupon().code()
-                        + " §acreated — " + discount);
+                    sender.sendMessage("§aCoupon " + result.coupon().code() + " created.");
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] create failed: " + ex.getMessage())
+                    sender.sendMessage("§cCreate failed: " + ex.getMessage())
                 );
             }
         });
@@ -625,28 +634,28 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
 
     private boolean handleCouponDelete(CommandSender sender, StorraApiClient api, String[] args) {
         if (args.length < 3) {
-            sender.sendMessage("§7Usage: §f/storra coupon delete <code>");
+            sender.sendMessage("§cUsage: /storra coupon delete <code>");
             return true;
         }
         String code = args[2];
-        sender.sendMessage("§7[Storra] deleting coupon §f" + code.toUpperCase() + "§7…");
+        sender.sendMessage("§eDeleting coupon " + code.toUpperCase() + "…");
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 StorraApiClient.CouponDeleteResult result = api.couponDelete(code);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!result.ok()) {
-                        sender.sendMessage("§c[Storra] delete failed: " + result.error());
+                        sender.sendMessage("§cDelete failed: " + result.error());
                         return;
                     }
                     if (result.deleted()) {
-                        sender.sendMessage("§a[Storra] coupon §f" + result.code() + " §adeleted.");
+                        sender.sendMessage("§aCoupon " + result.code() + " deleted.");
                     } else {
-                        sender.sendMessage("§7[Storra] no coupon found with code §f" + result.code() + "§7.");
+                        sender.sendMessage("§7No coupon found with code " + result.code() + ".");
                     }
                 });
             } catch (Exception ex) {
                 plugin.getServer().getScheduler().runTask(plugin, () ->
-                    sender.sendMessage("§c[Storra] delete failed: " + ex.getMessage())
+                    sender.sendMessage("§cDelete failed: " + ex.getMessage())
                 );
             }
         });
@@ -672,33 +681,23 @@ public final class StorraCommand implements CommandExecutor, TabCompleter {
     }
 
     private void sendUsage(CommandSender sender) {
-        sender.sendMessage("§6§lStorra Plugin§r §7— admin commands:");
-        sender.sendMessage("");
-        sender.sendMessage("§e Setup");
-        sender.sendMessage("§7   /storra pair §f<code>§7              pair to your Storra tenant");
-        sender.sendMessage("§7   /storra status                       show pairing + heartbeat state");
-        sender.sendMessage("§7   /storra reload                       reload config.yml");
-        sender.sendMessage("");
-        sender.sendMessage("§e Store");
-        sender.sendMessage("§7   /storra checkout §f<package>§7       generate a payment link in chat");
-        sender.sendMessage("§7   /storra sendlink §f<player> <pkg>§7  DM a payment link to a player");
-        sender.sendMessage("§7   /storra lookup §f<player>§7          payment history for a player");
-        sender.sendMessage("");
-        sender.sendMessage("§e Moderation");
-        sender.sendMessage("§7   /storra ban §f<player> [reason]§7    block a player from purchasing");
-        sender.sendMessage("§7   /storra unban §f<player>§7           lift a purchase ban");
-        sender.sendMessage("");
-        sender.sendMessage("§e Promotions");
-        sender.sendMessage("§7   /storra coupon list                  show active coupons");
-        sender.sendMessage("§7   /storra coupon create §f<code> <%>§7  create a percent-off code");
-        sender.sendMessage("§7   /storra coupon delete §f<code>§7      remove a coupon code");
-        sender.sendMessage("");
-        sender.sendMessage("§e Operations");
-        sender.sendMessage("§7   /storra forcecheck                   poll for pending deliveries now");
-        sender.sendMessage("§7   /storra history                      last N deliveries on this server");
-        sender.sendMessage("§7   /storra debug §f<on|off>§7           toggle verbose logging");
-        sender.sendMessage("");
-        sender.sendMessage("§7   /storra help                         show this menu");
+        // Tebex-style help: single-color (§7 gray), no bracket prefix,
+        // no decorative bold or icons, no section headers. One line
+        // per command — keeps the menu short and chat-quiet.
+        sender.sendMessage("§7Storra admin commands:");
+        sender.sendMessage("§7/storra pair <code> — pair this server to your Storra tenant");
+        sender.sendMessage("§7/storra status — show pairing and heartbeat state");
+        sender.sendMessage("§7/storra reload — reload config.yml");
+        sender.sendMessage("§7/storra checkout <package> — generate a payment link in chat");
+        sender.sendMessage("§7/storra sendlink <player> <package> — DM a payment link to a player");
+        sender.sendMessage("§7/storra lookup <player> — show recent payment history for a player");
+        sender.sendMessage("§7/storra ban <player> [reason] — block a player from purchasing");
+        sender.sendMessage("§7/storra unban <player> — lift a purchase ban");
+        sender.sendMessage("§7/storra coupon <list|create|delete> — manage discount codes");
+        sender.sendMessage("§7/storra forcecheck — poll for pending deliveries now");
+        sender.sendMessage("§7/storra history — show the last 25 deliveries on this server");
+        sender.sendMessage("§7/storra debug <on|off> — toggle verbose logging");
+        sender.sendMessage("§7/storra help — show this menu");
     }
 
     private static final List<String> SUBCOMMANDS = Arrays.asList(

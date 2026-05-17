@@ -82,14 +82,17 @@ public final class StoreAliasListener implements Listener {
     }
 
     private void sendStorefrontLink(org.bukkit.entity.Player player, String url) {
-        // tellraw JSON for clickable links — same shape the existing
-        // /storra checkout + /storra sendlink commands emit, so the
-        // in-game UX is consistent across all three surfaces.
+        // Tebex idiom — short lead-in line ("To visit our store, click
+        // this link:") followed by the URL as its own clickable line.
+        // Matches the /storra checkout output so /buy and /storra
+        // checkout feel like one consistent UX.
+        player.sendMessage("§7To visit our store, click this link:");
         String json = "[\"\",{"
-            + "\"text\":\"\\u00a7e\\u00a7l\\u272f \\u00a7r\\u00a76Visit our store: \\u00a7r\"},{"
-            + "\"text\":\"\\u00a7b\\u00a7n" + escape(url) + "\","
+            + "\"text\":\"" + escape(url) + "\","
+            + "\"color\":\"aqua\","
+            + "\"underlined\":true,"
             + "\"clickEvent\":{\"action\":\"open_url\",\"value\":\"" + escape(url) + "\"},"
-            + "\"hoverEvent\":{\"action\":\"show_text\",\"value\":\"\\u00a77Click to open in your browser\"}"
+            + "\"hoverEvent\":{\"action\":\"show_text\",\"contents\":\"\\u00a77Click to open in your browser\"}"
             + "}]";
         try {
             org.bukkit.Bukkit.dispatchCommand(
@@ -99,7 +102,8 @@ public final class StoreAliasListener implements Listener {
         } catch (Throwable t) {
             // Fallback to plain chat if tellraw isn't accepted for
             // some reason (mod conflict, command renamed, etc.).
-            player.sendMessage("§6Visit our store: §b§n" + url);
+            // Auto-detect in modern clients still makes it clickable.
+            player.sendMessage("§b" + url);
         }
     }
 
