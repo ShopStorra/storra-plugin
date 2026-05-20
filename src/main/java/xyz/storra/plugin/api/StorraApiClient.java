@@ -2,6 +2,7 @@ package xyz.storra.plugin.api;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.annotations.SerializedName;
 import xyz.storra.plugin.delivery.DeliveryTask;
 
 import java.io.IOException;
@@ -112,6 +113,46 @@ public final class StorraApiClient {
             log.info(msg + " (transient — retrying on next tick)");
         } else {
             log.warning(msg);
+        }
+    }
+
+    /** Result of GET /?action=config — merchant-authored plugin config. */
+    public record RemoteConfigResult(
+        String inventoryFullMessage,
+        String error
+    ) {
+        public boolean ok() { return error == null; }
+    }
+
+    private static final class RemoteConfigRaw {
+        @SerializedName("inventory_full_message")
+        String inventoryFullMessage;
+    }
+
+    /**
+     * GET /api/v1/plugin/?action=config — fetch the merchant-configured
+     * inventory-full message + any other plugin-side knobs the server
+     * exposes. Cached in memory by RemoteConfigService (5-min poll).
+     * Returns the server's default fallback when no per-tenant value
+     * is set, so the plugin never sees null.
+     */
+    public RemoteConfigResult getRemoteConfig() throws IOException, InterruptedException {
+        HttpResponse<String> res = signedSend(
+            "/api/v1/plugin/?action=config", "GET", EMPTY_BODY
+        );
+        if (res.statusCode() != 200) {
+            logNonOk("config", res.statusCode(), res.body());
+            return new RemoteConfigResult(null,
+                "HTTP " + res.statusCode() + " — " + res.body());
+        }
+        try {
+            RemoteConfigRaw parsed = GSON.fromJson(res.body(), RemoteConfigRaw.class);
+            if (parsed == null) {
+                return new RemoteConfigResult(null, "malformed response");
+            }
+            return new RemoteConfigResult(parsed.inventoryFullMessage, null);
+        } catch (Exception ex) {
+            return new RemoteConfigResult(null, "parse failed: " + ex.getMessage());
         }
     }
 

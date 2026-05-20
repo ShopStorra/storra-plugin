@@ -38,18 +38,21 @@ public final class DeliveryManager {
     private final StorraApiClient api;
     private final OfflineQueue offlineQueue;
     private final DeliveryHistory history;
+    private final InventoryFullNotifier inventoryFullNotifier;
     private final Logger log;
 
     public DeliveryManager(
         JavaPlugin plugin,
         StorraApiClient api,
         OfflineQueue offlineQueue,
-        DeliveryHistory history
+        DeliveryHistory history,
+        InventoryFullNotifier inventoryFullNotifier
     ) {
         this.plugin = plugin;
         this.api = api;
         this.offlineQueue = offlineQueue;
         this.history = history;
+        this.inventoryFullNotifier = inventoryFullNotifier;
         this.log = plugin.getLogger();
     }
 
@@ -164,12 +167,28 @@ public final class DeliveryManager {
             if (player != null) {
                 int free = countFreeInventorySlots(player);
                 if (free < task.requiredSlots()) {
+                    int slotsNeeded = task.requiredSlots() - free;
                     String reason = "inventory_full (need "
                         + task.requiredSlots() + ", have " + free + ")";
                     log.info(
                         "Deferring task " + task.commandId() + " for "
                         + task.playerName() + ": " + reason
                     );
+                    // Tell the player WHY their items haven't shown
+                    // up — without this they assume the store is
+                    // broken. The notifier debounces per-player so
+                    // repeated poll cycles don't spam chat.
+                    if (inventoryFullNotifier != null) {
+                        try {
+                            inventoryFullNotifier.notify(player, task, slotsNeeded);
+                        } catch (Throwable t) {
+                            // Notification is best-effort polish — never
+                            // fail the report path because chat threw.
+                            log.warning(
+                                "Inventory-full notify failed: " + t.getMessage()
+                            );
+                        }
+                    }
                     try {
                         history.recordFailed(task, reason);
                     } catch (Exception ignored) {

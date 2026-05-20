@@ -5,9 +5,12 @@ import xyz.storra.plugin.api.HmacSigner;
 import xyz.storra.plugin.api.StorraApiClient;
 import xyz.storra.plugin.command.StorraCommand;
 import xyz.storra.plugin.config.PluginConfig;
+import xyz.storra.plugin.config.RemoteConfigService;
 import xyz.storra.plugin.delivery.DeliveryHistory;
 import xyz.storra.plugin.delivery.DeliveryManager;
+import xyz.storra.plugin.delivery.InventoryFullNotifier;
 import xyz.storra.plugin.delivery.OfflineQueue;
+import xyz.storra.plugin.listener.InventoryCloseListener;
 import xyz.storra.plugin.listener.PlayerJoinListener;
 import xyz.storra.plugin.service.HeartbeatService;
 import xyz.storra.plugin.service.PollService;
@@ -41,6 +44,7 @@ public final class StorraPlugin extends JavaPlugin {
     private DeliveryHistory history;
     private DeliveryManager deliveryManager;
     private StorraApiClient api;
+    private RemoteConfigService remoteConfigService;
     private xyz.storra.plugin.papi.StorraExpansion papiExpansion;
     private final xyz.storra.plugin.service.RuntimeState runtimeState =
         new xyz.storra.plugin.service.RuntimeState();
@@ -180,7 +184,18 @@ public final class StorraPlugin extends JavaPlugin {
             getLogger()
         );
 
-        deliveryManager = new DeliveryManager(this, api, offlineQueue, history);
+        // RemoteConfigService polls /?action=config for merchant-
+        // configured plugin knobs (currently just the inventory-full
+        // chat message). Started before DeliveryManager so the first
+        // deferred delivery already has a real cached value.
+        remoteConfigService = new RemoteConfigService(this, api);
+        remoteConfigService.start();
+        InventoryFullNotifier inventoryFullNotifier =
+            new InventoryFullNotifier(remoteConfigService);
+
+        deliveryManager = new DeliveryManager(
+            this, api, offlineQueue, history, inventoryFullNotifier
+        );
 
         pollService = new PollService(this, api, deliveryManager, config.pollInterval());
         heartbeatService = new HeartbeatService(this, api, config.heartbeatInterval());
@@ -190,6 +205,13 @@ public final class StorraPlugin extends JavaPlugin {
         new RecoveryService(this, api, deliveryManager).runOnce();
         getServer().getPluginManager().registerEvents(
             new PlayerJoinListener(this, deliveryManager),
+            this
+        );
+        // Close-of-inventory triggers an immediate re-poll so deferred
+        // deliveries waiting on slot space dispatch within a second of
+        // the player dumping items, not on the next 30s tick.
+        getServer().getPluginManager().registerEvents(
+            new InventoryCloseListener(pollService),
             this
         );
 
@@ -236,6 +258,10 @@ public final class StorraPlugin extends JavaPlugin {
         if (heartbeatService != null) {
             heartbeatService.stop();
             heartbeatService = null;
+        }
+        if (remoteConfigService != null) {
+            remoteConfigService.stop();
+            remoteConfigService = null;
         }
         // Cached runtime state belongs to a single (tenant, server-id)
         // pairing. A reload that re-pairs to a different tenant must
