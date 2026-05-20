@@ -8,7 +8,10 @@ import xyz.storra.plugin.delivery.DeliveryManager;
 import xyz.storra.plugin.delivery.DeliveryTask;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 
 /**
@@ -50,15 +53,31 @@ public final class PollService {
             @Override
             public void run() {
                 try {
-                    List<DeliveryTask> tasks = api.fetchPending();
-                    for (DeliveryTask t : tasks) {
-                        deliveryManager.deliver(t);
-                    }
+                    dispatchBatches(api.fetchPending());
                 } catch (Exception ex) {
                     log.warning("Poll failed: " + ex.getMessage());
                 }
             }
         }.runTaskTimerAsynchronously(plugin, ticks, ticks);
+    }
+
+    /**
+     * Group the response from /pending into atomic batches by
+     * (orderId, orderItemId) and hand each batch to the
+     * DeliveryManager. LinkedHashMap preserves dispatch order so a
+     * tick that surfaced commands in the server's natural insertion
+     * order delivers them the same way. Legacy server payloads
+     * without orderId/orderItemId fall into per-command singletons
+     * (DeliveryTask.batchKey returns "singleton::<commandId>").
+     */
+    private void dispatchBatches(List<DeliveryTask> tasks) {
+        Map<String, List<DeliveryTask>> batches = new LinkedHashMap<>();
+        for (DeliveryTask t : tasks) {
+            batches.computeIfAbsent(t.batchKey(), k -> new ArrayList<>()).add(t);
+        }
+        for (List<DeliveryTask> batch : batches.values()) {
+            deliveryManager.deliverBatch(batch);
+        }
     }
 
     public void stop() {
@@ -83,9 +102,7 @@ public final class PollService {
             public void run() {
                 try {
                     List<DeliveryTask> tasks = api.fetchPending();
-                    for (DeliveryTask t : tasks) {
-                        deliveryManager.deliver(t);
-                    }
+                    dispatchBatches(tasks);
                     result.complete(tasks.size());
                 } catch (Exception ex) {
                     log.warning("Forced poll failed: " + ex.getMessage());

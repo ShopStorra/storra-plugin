@@ -6,6 +6,7 @@ import xyz.storra.plugin.api.StorraApiClient;
 import xyz.storra.plugin.command.StorraCommand;
 import xyz.storra.plugin.config.PluginConfig;
 import xyz.storra.plugin.config.RemoteConfigService;
+import xyz.storra.plugin.delivery.DeferredBatchTracker;
 import xyz.storra.plugin.delivery.DeliveryHistory;
 import xyz.storra.plugin.delivery.DeliveryManager;
 import xyz.storra.plugin.delivery.InventoryFullNotifier;
@@ -185,16 +186,21 @@ public final class StorraPlugin extends JavaPlugin {
         );
 
         // RemoteConfigService polls /?action=config for merchant-
-        // configured plugin knobs (currently just the inventory-full
-        // chat message). Started before DeliveryManager so the first
-        // deferred delivery already has a real cached value.
+        // configured plugin knobs (inventory-full message,
+        // delivery_timeout_hours). Started before DeliveryManager so
+        // the first deferred delivery already has real cached values.
         remoteConfigService = new RemoteConfigService(this, api);
         remoteConfigService.start();
         InventoryFullNotifier inventoryFullNotifier =
             new InventoryFullNotifier(remoteConfigService);
+        // Tracker writes to the same SQLite db as the offline queue +
+        // history. Schema bootstrap happens in Database.open().
+        DeferredBatchTracker deferredBatchTracker =
+            new DeferredBatchTracker(database, getLogger());
 
         deliveryManager = new DeliveryManager(
-            this, api, offlineQueue, history, inventoryFullNotifier
+            this, api, offlineQueue, history,
+            inventoryFullNotifier, deferredBatchTracker, remoteConfigService
         );
 
         pollService = new PollService(this, api, deliveryManager, config.pollInterval());

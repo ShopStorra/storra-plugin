@@ -119,6 +119,7 @@ public final class StorraApiClient {
     /** Result of GET /?action=config — merchant-authored plugin config. */
     public record RemoteConfigResult(
         String inventoryFullMessage,
+        int deliveryTimeoutHours,
         String error
     ) {
         public boolean ok() { return error == null; }
@@ -127,6 +128,9 @@ public final class StorraApiClient {
     private static final class RemoteConfigRaw {
         @SerializedName("inventory_full_message")
         String inventoryFullMessage;
+
+        @SerializedName("delivery_timeout_hours")
+        Integer deliveryTimeoutHours;
     }
 
     /**
@@ -142,17 +146,21 @@ public final class StorraApiClient {
         );
         if (res.statusCode() != 200) {
             logNonOk("config", res.statusCode(), res.body());
-            return new RemoteConfigResult(null,
+            return new RemoteConfigResult(null, 0,
                 "HTTP " + res.statusCode() + " — " + res.body());
         }
         try {
             RemoteConfigRaw parsed = GSON.fromJson(res.body(), RemoteConfigRaw.class);
             if (parsed == null) {
-                return new RemoteConfigResult(null, "malformed response");
+                return new RemoteConfigResult(null, 0, "malformed response");
             }
-            return new RemoteConfigResult(parsed.inventoryFullMessage, null);
+            return new RemoteConfigResult(
+                parsed.inventoryFullMessage,
+                parsed.deliveryTimeoutHours == null ? 0 : parsed.deliveryTimeoutHours,
+                null
+            );
         } catch (Exception ex) {
-            return new RemoteConfigResult(null, "parse failed: " + ex.getMessage());
+            return new RemoteConfigResult(null, 0, "parse failed: " + ex.getMessage());
         }
     }
 
@@ -183,10 +191,31 @@ public final class StorraApiClient {
 
     /** POST /api/v1/plugin/fail — report a delivery failure. */
     public boolean fail(String commandId, String reason) throws IOException, InterruptedException {
-        String body = GSON.toJson(Map.of(
-            "commandId", commandId,
-            "reason", reason == null ? "" : reason
-        ));
+        return failInternal(commandId, reason, false);
+    }
+
+    /**
+     * Terminal-fail variant: tells Storra to stop auto-retrying
+     * this row. Used by the inventory-full timeout path after the
+     * configured threshold (default 7 days). On the server side
+     * this sets `status='failed'` + `next_retry_at=null`, mimicking
+     * the dead-letter end state but skipping the attempts ceiling.
+     * The merchant's redeliver button still works.
+     */
+    public boolean failTerminal(String commandId, String reason) throws IOException, InterruptedException {
+        return failInternal(commandId, reason, true);
+    }
+
+    private boolean failInternal(
+        String commandId,
+        String reason,
+        boolean terminal
+    ) throws IOException, InterruptedException {
+        java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("commandId", commandId);
+        payload.put("reason", reason == null ? "" : reason);
+        if (terminal) payload.put("terminal", true);
+        String body = GSON.toJson(payload);
         HttpResponse<String> res = signedSend("/api/v1/plugin/fail", "POST", body);
         if (res.statusCode() != 200) {
             logNonOk("fail", res.statusCode(), res.body());

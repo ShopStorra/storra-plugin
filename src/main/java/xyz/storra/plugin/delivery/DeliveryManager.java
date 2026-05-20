@@ -1,13 +1,18 @@
 package xyz.storra.plugin.delivery;
 
+import net.md_5.bungee.api.ChatMessageType;
+import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.command.ConsoleCommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import xyz.storra.plugin.api.StorraApiClient;
+import xyz.storra.plugin.config.RemoteConfigService;
 
+import java.util.List;
 import java.util.logging.Logger;
 
 /**
@@ -39,6 +44,8 @@ public final class DeliveryManager {
     private final OfflineQueue offlineQueue;
     private final DeliveryHistory history;
     private final InventoryFullNotifier inventoryFullNotifier;
+    private final DeferredBatchTracker deferredBatchTracker;
+    private final RemoteConfigService remoteConfigService;
     private final Logger log;
 
     public DeliveryManager(
@@ -46,13 +53,17 @@ public final class DeliveryManager {
         StorraApiClient api,
         OfflineQueue offlineQueue,
         DeliveryHistory history,
-        InventoryFullNotifier inventoryFullNotifier
+        InventoryFullNotifier inventoryFullNotifier,
+        DeferredBatchTracker deferredBatchTracker,
+        RemoteConfigService remoteConfigService
     ) {
         this.plugin = plugin;
         this.api = api;
         this.offlineQueue = offlineQueue;
         this.history = history;
         this.inventoryFullNotifier = inventoryFullNotifier;
+        this.deferredBatchTracker = deferredBatchTracker;
+        this.remoteConfigService = remoteConfigService;
         this.log = plugin.getLogger();
     }
 
@@ -71,28 +82,66 @@ public final class DeliveryManager {
      *      delivery_queue so /pending re-emits it if the plugin
      *      restarts (RecoveryService picks it up).
      */
+    /**
+     * Deliver a single task. Thin wrapper around deliverBatch — the
+     * batch path is the canonical one. Kept for callers that still
+     * dispatch per-task (the offline-queue drain on PlayerJoinEvent,
+     * the RecoveryService warm-up).
+     */
     public void deliver(DeliveryTask task) {
-        if (!task.requireOnline()) {
-            runOnMain(() -> executeAndReport(task));
+        deliverBatch(List.of(task));
+    }
+
+    /**
+     * Atomic dispatch of every command tied to one (orderId,
+     * orderItemId). The whole batch waits together — if the
+     * inventory-full gate triggers, no command fires (so a
+     * broadcast can't announce "thanks for buying!" while the
+     * companion give commands are still queued). If the gate
+     * passes, every command runs in order.
+     *
+     * Routing:
+     *   1. requireOnline=true on any task + playerName resolves + player offline
+     *      → enqueue every task in offline queue, wait for join.
+     *   2. requireOnline=true on any task + no playerName
+     *      → server contract bug; log + dispatch anyway.
+     *   3. everything else (online player OR broadcast-only batch)
+     *      → main-thread executeBatch with inventory-full gate.
+     */
+    public void deliverBatch(List<DeliveryTask> batch) {
+        if (batch == null || batch.isEmpty()) return;
+
+        boolean anyRequireOnline = false;
+        String playerName = null;
+        for (DeliveryTask t : batch) {
+            if (t.requireOnline()) anyRequireOnline = true;
+            if (playerName == null && t.playerName() != null && !t.playerName().isEmpty()) {
+                playerName = t.playerName();
+            }
+        }
+
+        if (!anyRequireOnline) {
+            // Broadcast-only / console-only batch — no player gate.
+            runOnMain(() -> executeBatch(batch));
             return;
         }
-        String name = task.playerName();
-        if (name == null || name.isEmpty()) {
-            // Server contract bug: requireOnline=true with no name to
-            // wait on. Don't loop forever — log + dispatch immediately.
+
+        if (playerName == null) {
             log.warning(
-                "Task " + task.commandId() + " has requireOnline=true but no playerName; dispatching anyway"
+                "Batch " + batch.get(0).batchKey()
+                + " requires online player but no playerName; dispatching anyway"
             );
-            runOnMain(() -> executeAndReport(task));
+            runOnMain(() -> executeBatch(batch));
             return;
         }
-        // Bukkit.getPlayerExact is sync + lock-free; checks the live
-        // online-player list only. Cheap from any thread.
-        if (Bukkit.getPlayerExact(name) != null) {
-            runOnMain(() -> executeAndReport(task));
+
+        // Bukkit.getPlayerExact is sync + lock-free; safe from any thread.
+        if (Bukkit.getPlayerExact(playerName) != null) {
+            runOnMain(() -> executeBatch(batch));
             return;
         }
-        enqueueOffline(task);
+
+        enqueueBatchOffline(batch);
     }
 
     /** Drain everything queued for a player who just joined. */
@@ -154,6 +203,242 @@ public final class DeliveryManager {
             // Surface back to Storra so it can retry later — the task
             // is at risk of being lost otherwise.
             asyncReport(task, "offline queue write failed: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * Enqueue every task in the batch to the offline queue. Each
+     * row goes in keyed by the same player name so the PlayerJoin
+     * drain pulls them back in one pass. The atomic-batch guarantee
+     * weakens here: drainForPlayer dispatches per-row today, so a
+     * full-inventory player who comes back online will see the
+     * per-task inventory guard in executeAndReport fire — same
+     * pre-batch behavior. Re-batching the offline-drain path is a
+     * follow-up.
+     */
+    private void enqueueBatchOffline(List<DeliveryTask> batch) {
+        for (DeliveryTask task : batch) {
+            enqueueOffline(task);
+        }
+    }
+
+    /**
+     * Atomic batch execution — main-thread side. Runs the
+     * inventory-full gate ONCE on max(requiredSlots) across the
+     * batch; if it gates, every task in the batch is reported
+     * failed together (no broadcast-fires-but-give-defers split).
+     * If it passes, every command dispatches in order.
+     *
+     * Singleton batches (legacy server payload without
+     * orderId/orderItemId) take the same path — the math is
+     * one-task-deep, so the result matches pre-batch behavior.
+     */
+    private void executeBatch(List<DeliveryTask> batch) {
+        int maxRequiredSlots = 0;
+        String playerName = null;
+        for (DeliveryTask t : batch) {
+            if (t.requiredSlots() > maxRequiredSlots) {
+                maxRequiredSlots = t.requiredSlots();
+            }
+            if (playerName == null && t.playerName() != null && !t.playerName().isEmpty()) {
+                playerName = t.playerName();
+            }
+        }
+
+        // Batch-level inventory gate. Fires once per batch instead
+        // of once per command — so a broadcast (slots=0) stays
+        // queued with its give-command siblings (slots>0) when the
+        // player can't receive items.
+        if (maxRequiredSlots > 0 && playerName != null) {
+            Player player = Bukkit.getPlayerExact(playerName);
+            if (player != null) {
+                int free = countFreeInventorySlots(player);
+                if (free < maxRequiredSlots) {
+                    deferBatchOnInventoryFull(batch, player, maxRequiredSlots, free);
+                    return;
+                }
+            }
+            // Player null = offline. requireOnline routing already
+            // covered that path in deliverBatch; reaching here means
+            // every task had requireOnline=false but at least one
+            // had a playerName + requiredSlots > 0. Fall through and
+            // dispatch — the give command will fail server-side
+            // if the player truly isn't there.
+        }
+
+        // Cleared the inventory gate (or no gate was needed). Fire
+        // every command in order. Per-task results report
+        // independently — a single command failing in the middle
+        // of a batch doesn't roll back successful predecessors.
+        for (DeliveryTask task : batch) {
+            executeSingleAfterBatchGate(task);
+        }
+
+        // Successful dispatch — the batch escaped inventory-defer
+        // purgatory. Drop the tracker row so a future inventory-full
+        // for the same (orderId, orderItemId) starts a fresh
+        // timeout clock. Idempotent if the row never existed.
+        if (deferredBatchTracker != null) {
+            deferredBatchTracker.clear(batch.get(0).batchKey());
+        }
+    }
+
+    /**
+     * Single-task dispatch after the batch-level gate has already
+     * cleared. Skips the per-task inventory check (already verified
+     * by the caller) but runs the rest of the executeAndReport
+     * pipeline — Bukkit.dispatchCommand, history, receipt, asyncReport.
+     */
+    private void executeSingleAfterBatchGate(DeliveryTask task) {
+        boolean dispatched = dispatchCommand(task.command());
+        if (dispatched) {
+            try {
+                history.recordDelivered(task);
+            } catch (Exception ignored) {
+                // History is best-effort — don't fail the delivery.
+            }
+            try {
+                DeliveryReceipt.fire(plugin, task.playerName(), task);
+            } catch (Throwable t) {
+                log.warning("Delivery receipt failed: " + t.getMessage());
+            }
+            asyncReport(task, null);
+        } else {
+            try {
+                history.recordFailed(task, "Bukkit dispatch returned false");
+            } catch (Exception ignored) {
+            }
+            asyncReport(task, "Bukkit dispatch returned false");
+        }
+    }
+
+    /**
+     * Defer-handling for an inventory-full batch. Per-batch notifier
+     * (one chat + actionbar per defer event, not per task), then
+     * report every task as failed with the same reason.
+     *
+     * The 24h timeout fail-back path plugs in here — task 11 layers
+     * a DeferredBatchTracker over this method to escalate batches
+     * that have been stuck for the configured threshold.
+     */
+    private void deferBatchOnInventoryFull(
+        List<DeliveryTask> batch,
+        Player player,
+        int maxRequiredSlots,
+        int free
+    ) {
+        int slotsNeeded = maxRequiredSlots - free;
+        String reason = "inventory_full (need " + maxRequiredSlots
+            + ", have " + free + ")";
+        String batchKey = batch.get(0).batchKey();
+        String productName = batch.get(0).productName();
+        long now = System.currentTimeMillis();
+
+        // Note the deferral in the tracker BEFORE the timeout check
+        // so the very first deferral establishes first_deferred_at.
+        // Without this, a batch that hits the threshold on a single
+        // long-defer cycle would never trigger terminal-fail.
+        if (deferredBatchTracker != null) {
+            deferredBatchTracker.noteDeferral(
+                batchKey, player.getName(), productName, now
+            );
+        }
+
+        boolean terminal = isPastTimeout(batchKey, now);
+
+        log.info(
+            "Deferring batch " + batchKey + " for " + player.getName()
+            + " (" + batch.size() + " task" + (batch.size() == 1 ? "" : "s")
+            + "): " + reason + (terminal ? " [TERMINAL]" : "")
+        );
+
+        if (terminal) {
+            // Final apology to the player. Always sent (no debounce
+            // suppression) since terminal-fail only ever happens
+            // once per batch.
+            sendTerminalMessage(player, productName);
+            String terminalReason =
+                "inventory_never_freed (timed out after "
+                + remoteTimeoutHours() + "h of repeated defers)";
+            for (DeliveryTask task : batch) {
+                try {
+                    history.recordFailed(task, terminalReason);
+                } catch (Exception ignored) {
+                }
+                asyncReportTerminal(task, terminalReason);
+            }
+            if (deferredBatchTracker != null) {
+                deferredBatchTracker.clear(batchKey);
+            }
+            return;
+        }
+
+        // Non-terminal: standard inventory-full notify + soft-fail.
+        if (inventoryFullNotifier != null) {
+            try {
+                inventoryFullNotifier.notify(player, batch.get(0), slotsNeeded);
+            } catch (Throwable t) {
+                log.warning("Inventory-full notify failed: " + t.getMessage());
+            }
+        }
+
+        for (DeliveryTask task : batch) {
+            try {
+                history.recordFailed(task, reason);
+            } catch (Exception ignored) {
+            }
+            asyncReport(task, reason);
+        }
+    }
+
+    /**
+     * True if the batch has been stuck on inventory-full for longer
+     * than the merchant-configured threshold. Returns false when
+     * the tracker is unavailable (graceful degrade — better to
+     * keep retrying than to drop a real delivery on a bad lookup).
+     */
+    private boolean isPastTimeout(String batchKey, long nowMs) {
+        if (deferredBatchTracker == null) return false;
+        Long firstAt = deferredBatchTracker.firstDeferredAt(batchKey);
+        if (firstAt == null) return false;
+        int hours = remoteTimeoutHours();
+        if (hours <= 0) return false;
+        long thresholdMs = hours * 3_600_000L;
+        return (nowMs - firstAt) >= thresholdMs;
+    }
+
+    private int remoteTimeoutHours() {
+        if (remoteConfigService == null) return 0;
+        return remoteConfigService.get().deliveryTimeoutHours();
+    }
+
+    /**
+     * Terminal apology message — one shot, no debounce, sent only
+     * once per batch lifetime (terminal-fail clears the tracker).
+     * Hard-coded English string for now; the configurable template
+     * lives behind {@link RemoteConfigService} when we add a knob
+     * for it.
+     */
+    private void sendTerminalMessage(Player player, String productName) {
+        if (player == null || !player.isOnline()) return;
+        String label = productName == null || productName.isEmpty()
+            ? "your purchase"
+            : productName;
+        String message = ChatColor.translateAlternateColorCodes('&',
+            "&cCouldn't deliver &e" + label
+            + "&c — your inventory was full for too long. &7Contact server staff for help."
+        );
+        try {
+            player.sendMessage(message);
+            player.spigot().sendMessage(
+                ChatMessageType.ACTION_BAR,
+                TextComponent.fromLegacyText(message)
+            );
+        } catch (Throwable t) {
+            // Best-effort polish. Terminal-fail report goes out
+            // regardless so the row escapes retry purgatory even if
+            // the player can't be reached right now.
+            log.warning("Terminal-fail message failed: " + t.getMessage());
         }
     }
 
@@ -311,6 +596,32 @@ public final class DeliveryManager {
                     "Failed to report task " + commandId + " (" +
                     (failReason == null ? "confirm" : "fail") +
                     "): " + ex.getMessage()
+                );
+            }
+        });
+    }
+
+    /**
+     * Terminal-fail variant. Tells Storra to stop auto-retrying
+     * this row (server flips status=failed + next_retry_at=null).
+     * Used by the inventory-full timeout escalation path.
+     */
+    private void asyncReportTerminal(DeliveryTask task, String reason) {
+        String commandId = task.commandId();
+        runAsync(() -> {
+            try {
+                api.failTerminal(commandId, reason);
+            } catch (Exception ex) {
+                // Network failure on terminal-fail is annoying but
+                // not catastrophic — the row stays in pending state
+                // and the next cycle will either terminal-fail it
+                // again or (if the player finally freed space)
+                // succeed normally. We don't clear the tracker on
+                // network failure so the next attempt also sees the
+                // batch as past-timeout.
+                log.warning(
+                    "Failed to terminal-fail task " + commandId
+                    + ": " + ex.getMessage()
                 );
             }
         });

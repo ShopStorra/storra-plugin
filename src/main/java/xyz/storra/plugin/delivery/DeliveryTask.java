@@ -9,21 +9,37 @@ import com.google.gson.annotations.SerializedName;
  * v2 wire contract (matches `src/routes/api/v1/plugin/$.ts`):
  *   {
  *     "id":            "<uuid>",
+ *     "orderId":       "<uuid>",          | null on legacy payloads
+ *     "orderItemId":   "<uuid>",          | null on legacy payloads
  *     "command":       "<bukkit command string>",
- *     "playerName":    "<in-game name>"  | null,
+ *     "playerName":    "<in-game name>"   | null,
  *     "requireOnline": true | false,
- *     "requiredSlots": <integer, 0 = no check>
+ *     "requiredSlots": <integer, 0 = no check>,
+ *     "productName":   "<product display name>" | null
  *   }
  *
  * When requireOnline is true (Tebex parity default), the
  * DeliveryManager defers dispatch until `playerName` is online
  * (Bukkit.getPlayerExact). When false, the command fires
  * immediately as console — for broadcasts / console-only commands.
+ *
+ * `orderId` + `orderItemId` group every command for one purchase of
+ * one package — the plugin's PollService treats those as a single
+ * atomic batch for the inventory-full gate. Older Storra servers
+ * may omit these fields (pre 2026-05-20); the plugin treats a null
+ * value as a singleton batch (each command gates on its own
+ * requiredSlots, matching pre-batch behavior).
  */
 public final class DeliveryTask {
 
     @SerializedName("id")
     private String commandId;
+
+    @SerializedName("orderId")
+    private String orderId;
+
+    @SerializedName("orderItemId")
+    private String orderItemId;
 
     @SerializedName("command")
     private String command;
@@ -42,6 +58,28 @@ public final class DeliveryTask {
 
     public String commandId() {
         return commandId;
+    }
+
+    public String orderId() {
+        return orderId;
+    }
+
+    public String orderItemId() {
+        return orderItemId;
+    }
+
+    /**
+     * Stable key that groups every command belonging to the same
+     * (order, orderItem). When either field is null (legacy server
+     * payload), each command is its own group, identified by its
+     * commandId — keeps the batch-pipeline shape one-to-one with
+     * the older one-task-at-a-time path.
+     */
+    public String batchKey() {
+        if (orderId != null && orderItemId != null) {
+            return orderId + "::" + orderItemId;
+        }
+        return "singleton::" + commandId;
     }
 
     public String command() {

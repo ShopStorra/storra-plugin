@@ -117,6 +117,21 @@ public final class Database implements AutoCloseable {
                 "CREATE INDEX IF NOT EXISTS delivery_history_recorded_at_idx " +
                 "ON delivery_history(recorded_at DESC)"
             );
+            // Tracks how long a batch has been stuck on inventory-full
+            // defer. DeliveryManager records first/last deferral
+            // timestamps + a counter; the timeout fail-back path uses
+            // first_deferred_at to escalate to terminal-fail after the
+            // merchant-configured threshold (default 7 days).
+            st.execute(
+                "CREATE TABLE IF NOT EXISTS deferred_batches (" +
+                "  batch_key TEXT PRIMARY KEY, " +
+                "  player_name TEXT, " +
+                "  product_name TEXT, " +
+                "  first_deferred_at INTEGER NOT NULL, " +
+                "  last_deferred_at INTEGER NOT NULL, " +
+                "  defer_count INTEGER NOT NULL DEFAULT 1" +
+                ")"
+            );
         }
         plugin.getLogger().info("SQLite ready at " + dbPath);
         return new Database(conn);
